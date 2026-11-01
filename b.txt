@@ -1,0 +1,38 @@
+﻿Godot_v4.7.2-stable_win64_console.exe : ERROR: Failed to open 'user://logs/godot2026-09-17T23.04.53.log'.
+At line:2 char:1
++ & $g --headless --path 'D:\godot\program\zhengfengpindao' 'res://scen ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: Failed t...T23.04.53.log'.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   at: copy (core/io/dir_access.cpp:429)
+ERROR: Failed to open log file for writing: user://logs/godot.log
+   at: rotate_file (core/io/logger.cpp:169)
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+ERROR: Failed to read the root certificate store.
+   at: get_system_ca_certificates (platform/windows/os_windows.cpp:2582)
+[balance] ===== ① 配平质量：两队阵容评分差距 =====
+[balance]   第 1轮 总权重 10（每队约 10人）｜平均评分差 3.4｜最大 7.9
+[balance]   第 4轮 总权重 19（每队约 19人）｜平均评分差 1.1｜最大 1.1
+[balance]   第 7轮 总权重 28（每队约 28人）｜平均评分差 2.3｜最大 7.9
+[balance]   第10轮 总权重 37（每队约 37人）｜平均评分差 1.7｜最大 7.9
+[balance] ===== ② 混编对局：兵种优势度（20 局/轮次）=====
+[balance]   第 1轮 分胜负 20/20｜平均时长 11.0s｜出场比 剑138 矛141 弓121
+[balance]      └ 弓兵更多的一方获胜率：58%（19 局可比）
+[balance]   第 4轮 分胜负 20/20｜平均时长 12.3s｜出场比 剑258 矛241 弓261
+[balance]      └ 弓兵更多的一方获胜率：50%（16 局可比）
+[balance]   第 7轮 分胜负 20/20｜平均时长 12.2s｜出场比 剑363 矛376 弓381
+[balance]      └ 弓兵更多的一方获胜率：50%（14 局可比）
+[balance]   第10轮 分胜负 20/20｜平均时长 12.8s｜出场比 剑505 矛494 弓481
+[balance]      └ 弓兵更多的一方获胜率：47%（19 局可比）
+[balance] ===== ④ 单挑诊断（1v1，接触后有效 DPS 与击杀耗时）=====
+[balance]   剑盾→剑盾 需2.9s/剑盾→剑盾 需2.9s｜剑盾→长矛 需2.1s/长矛→剑盾 需2.6s｜剑盾→弓兵 需2.0s/弓兵→剑盾 需2.9s
+[balance]   长矛→剑盾 需2.6s/剑盾→长矛 需2.1s｜长矛→长矛 需1.9s/长矛→长矛 需1.9s｜长矛→弓兵 需1.8s/弓兵→长矛 需2.1s
+[balance]   弓兵→剑盾 需2.9s/剑盾→弓兵 需2.0s｜弓兵→长矛 需2.1s/长矛→弓兵 需1.8s｜弓兵→弓兵 需1.9s/弓兵→弓兵 需1.9s
+[balance] ===== ③ 纯兵种对局胜率（每边 8 人）=====
+[balance]   剑盾→剑盾  45%(平 0%, 11s, 挡0/1606, 余4)｜剑盾→长矛  48%(平 0%, 10s, 挡0/1321, 余3)｜剑盾→弓兵 100%(平 0%, 13s, 挡1544/2529, 余6)
+[balance]   长矛→剑盾  80%(平 0%, 10s, 挡0/1310, 余4)｜长矛→长矛  53%(平 0%, 9s, 挡0/1078, 余3)｜长矛→弓兵   0%(平 0%, 5s, 挡0/640, 余0)
+[balance]   弓兵→剑盾   0%(平 0%, 13s, 挡1546/2560, 余0)｜弓兵→长矛 100%(平 0%, 5s, 挡0/640, 余8)｜弓兵→弓兵  30%(平 0%, 7s, 挡0/1132, 余2)
+WARNING: 702 ObjectDB instances were leaked at exit (run with `--verbose` for details).
+   at: cleanup (core/object/object.cpp:2536)
