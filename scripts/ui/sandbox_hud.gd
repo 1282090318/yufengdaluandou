@@ -62,6 +62,8 @@ var _hp_a: Label = null
 var _alive_b: Label = null
 var _hp_b: Label = null
 var _gear: Button = null
+## 倍速按钮（2026-11-01）：顶栏右端、齿轮左边。外观与接线在 `UiStyle.make_speed_button()`（三套 HUD 共用）。
+var _speed_button: Button = null
 
 var _palette_panel: PanelContainer = null
 var _chips: Dictionary = {}              ## 兵种 ID → 小卡按钮（只建一次，之后只改"选中"外观）
@@ -170,6 +172,13 @@ func _build_top_bar() -> void:
 	row.add_child(_alive_b)
 	_hp_b = _make_label("", FONT_TINY, COLOR_DIM, "Hp_b")
 	row.add_child(_hp_b)
+
+	## 倍速（2026-11-01）：插在齿轮左边（齿轮是顶栏最右一格，见竞猜 HUD 同一条口径）。
+	## ⚠️ 倍速**常显**（2026-11-01 修 bug：用户"战斗开始后无法点加速"）：
+	## 战斗中正要用它，而那时光标被 `CameraRig` 锁住 ⇒ 靠快捷键 `F` 切（见 `UiStyle`），
+	## 按钮本身必须一直亮着（`Button.shortcut` 只在可见时才派发），顺便让人看见当前是几倍。
+	_speed_button = UiStyle.make_speed_button("SpeedButton")
+	row.add_child(_speed_button)
 
 	_gear = Button.new()
 	_gear.name = "GearButton"
@@ -696,6 +705,7 @@ func _refresh_top() -> void:
 	## ⇒ 那时只认 Esc（与经典 HUD 同一条口径）。
 	if _gear != null:
 		_gear.visible = sandbox.phase == Sandbox.Phase.PLACING or sandbox.phase == Sandbox.Phase.RESULT
+	## 倍速按钮**不跟着齿轮藏**：它常显（见建它时那条注释），战斗中也亮着。
 
 func _refresh_palette() -> void:
 	var placing := sandbox.phase == Sandbox.Phase.PLACING

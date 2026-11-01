@@ -195,6 +195,129 @@ static func gear_texture() -> ImageTexture:
 	img.resize(GEAR_IMAGE_PX, GEAR_IMAGE_PX, Image.INTERPOLATE_LANCZOS)
 	return ImageTexture.create_from_image(img)
 
+# ---------------------------------------------------------------- 倍速按钮（2026-11-01）
+## 右上角那颗"1× / 2×"。⚠️ 三套 HUD 用**同一个**按钮、同一份接线（与齿轮同一条口径），
+## 免得三处各写一套、改一处忘两处。倍速**本身**的实现在 `MatchSpeed`，这里只管图标与点击。
+const SPEED_BUTTON_PX := Vector2(58.0, 40.0)
+const SPEED_CHEVRONS := 2           ## 两个向右的尖角 ⇒ 一眼是"快进"，不用写字解释
+## ⚠️ 快捷键 `F`（Fast）—— 2026-11-01 修 bug：用户"战斗开始后无法点加速，只能在战斗前设置"。
+## 原因是战斗阶段 `CameraRig._fight_started` 把光标锁进窗口（`MOUSE_MODE_CAPTURED`）⇒ **鼠标点不到
+## 任何 UI**，齿轮因此只在押注 / 结算出现。但倍速恰恰是战斗里最想用的那个 ⇒ 给它一条**不看鼠标**的路：
+## `Button.shortcut` 由窗口直接派发键盘事件，与鼠标模式无关 ⇒ 战斗中按 `F` 照样能切。
+##（`1`=技能 / `X`=肩位 / `Q`=交还 / WASD=镜头 都已占用，`F` 是空的。）
+const SPEED_SHORTCUT_KEY := KEY_F
+
+static func decorate_speed(button: Button) -> void:
+	button.custom_minimum_size = SPEED_BUTTON_PX
+	button.icon = speed_texture()
+	button.focus_mode = Control.FOCUS_NONE        ## 同齿轮：`Space` 是 cam_up，别让按钮抢焦点
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+
+## 建好一颗倍速按钮（**接线也在这里**）：点一下 2×、再点一下 1×，按钮上的字由 `MatchSpeed` 给。
+## 调用方只需要 `row.add_child(...)`，剩下的三套 HUD 完全一致。
+static func make_speed_button(node_name: String) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	decorate_speed(button)
+	## 快捷键：见 `SPEED_SHORTCUT_KEY`。⚠️ `Button.shortcut` 只在按钮**可见且在树里**时才派发
+	## ⇒ 三套 HUD 都必须让它常显（不能跟着齿轮一起藏）。
+	var key_event := InputEventKey.new()
+	key_event.keycode = SPEED_SHORTCUT_KEY
+	key_event.physical_keycode = SPEED_SHORTCUT_KEY      ## 物理键位一起写：换键盘布局也不失灵
+	var shortcut := Shortcut.new()
+	shortcut.events = [key_event]
+	button.shortcut = shortcut
+	button.text = MatchSpeed.label()
+	button.tooltip_text = "倍速（F）：点一下 2×、再点一下 1×"
+	button.pressed.connect(_on_speed_pressed.bind(button))
+	return button
+
+## 切倍速并把新档位的文字写回按钮。**抽成具名函数**而不是内联 lambda：三套 HUD 共用同一份接线，
+## 具名函数才能在调用栈里看出"是谁切的倍速"（`08_naming.md` 的可读性口径）。
+static func _on_speed_pressed(button: Button) -> void:
+	button.text = MatchSpeed.toggle()
+
+## 两个向右的尖角，画在 40×40 里（与齿轮同一档尺寸）。
+static func speed_texture() -> ImageTexture:
+	var px := GEAR_IMAGE_PX
+	var img := Image.create(px, px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	for i in SPEED_CHEVRONS:
+		var x0 := 6 + i * 11
+		for t in 11:
+			var top := int(round(8.0 + float(t) * 1.2))
+			var bottom := int(round(32.0 - float(t) * 1.2))
+			for y in range(top, bottom + 1):
+				img.set_pixel(x0 + t, y, GEAR_COLOR)
+	return ImageTexture.create_from_image(img)
+
+# ---------------------------------------------------------------- 顶栏读数图标（2026-11-01）
+## 肉鸽顶栏的**补给 / 生命**两格：以前只有文字（"补给 12" / "血量 8 / 20"），玩家分不清哪一行是哪一个
+##（用户："补给和生命感觉有点不太明显，可以加个图案后跟数字"）⇒ 各配一个图案，图案后面只跟数字。
+## ⚠️ 与齿轮**同一套做法**：`Image` 逐像素画 → `resize(LANCZOS)` → `ImageTexture`。
+## 既不用外部资源，也不依赖字体里有没有对应字形（齿轮那段的注释写了同样的理由）。
+const STAT_ICON_PX := 28
+const SUPPLY_FILL := Color(0.95, 0.78, 0.35)   ## 箱体：与顶栏"补给"那个暖色同族
+const SUPPLY_LINE := Color(0.40, 0.28, 0.10)   ## 外框与捆带
+const HP_FILL := Color(0.88, 0.26, 0.32)       ## 心：与"血量告警"那个橙红同族
+
+## 补给箱：外框 + 对角捆带 + 中缝 ⇒ 一眼是"箱子"，不会跟心形混。
+static func supply_texture() -> ImageTexture:
+	var px := STAT_ICON_PX * 2
+	var img := Image.create(px, px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	var lo := float(px) * 0.14
+	var hi := float(px) - lo
+	var mid := float(px) * 0.5
+	var band := float(px) * 0.075
+	for y in px:
+		for x in px:
+			var fx := float(x) + 0.5
+			var fy := float(y) + 0.5
+			if fx < lo or fx > hi or fy < lo or fy > hi:
+				continue
+			var on_edge := fx < lo + 2.0 or fx > hi - 2.0 or fy < lo + 2.0 or fy > hi - 2.0
+			var on_diag := absf((fx - lo) - (fy - lo)) < band or absf((fx - lo) + (fy - hi)) < band
+			var on_seam := absf(fy - mid) < band * 0.7
+			img.set_pixel(x, y, SUPPLY_LINE if (on_edge or on_diag or on_seam) else SUPPLY_FILL)
+	img.resize(STAT_ICON_PX, STAT_ICON_PX, Image.INTERPOLATE_LANCZOS)
+	return ImageTexture.create_from_image(img)
+
+## 心：经典心形不等式 (x² + y² − 1)³ − x²·y³ ≤ 0。⚠️ `ny` 已经把屏幕 y（向下）翻正了。
+static func heart_texture() -> ImageTexture:
+	var px := STAT_ICON_PX * 2
+	var img := Image.create(px, px, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.0, 0.0, 0.0, 0.0))
+	for y in px:
+		for x in px:
+			var nx := (float(x) + 0.5) / float(px) * 2.6 - 1.3
+			var ny := 1.15 - (float(y) + 0.5) / float(px) * 2.6
+			var a := nx * nx + ny * ny - 1.0
+			if a * a * a - nx * nx * ny * ny * ny <= 0.0:
+				img.set_pixel(x, y, HP_FILL)
+	img.resize(STAT_ICON_PX, STAT_ICON_PX, Image.INTERPOLATE_LANCZOS)
+	return ImageTexture.create_from_image(img)
+
+## "图案 + 数字"的一格（顶栏读数用）。⚠️ **只建一次**，刷新只改返回的那个 `label.text`
+##（硬规则 `05_ui_hud.md#7.1`：节点只构建一次，禁止 `queue_free()` 重建）。
+## 返回 `{ root: HBoxContainer, label: Label }`，调用方把 `root` 挂进顶栏、自己留着 `label`。
+static func make_icon_label(icon: Texture2D, text: String, size: int, color: Color, node_name: String) -> Dictionary:
+	var root := HBoxContainer.new()
+	root.name = node_name
+	root.add_theme_constant_override("separation", 6)
+	var pic := TextureRect.new()
+	pic.name = "Icon"
+	pic.texture = icon
+	pic.custom_minimum_size = Vector2(STAT_ICON_PX, STAT_ICON_PX)
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE    ## 贴图不参与最小尺寸计算，格子大小只由上面那行定
+	pic.mouse_filter = Control.MOUSE_FILTER_IGNORE      ## 别把顶栏的鼠标事件吃掉
+	root.add_child(pic)
+	var label := make_label(text, size, color)
+	label.name = "Value"
+	root.add_child(label)
+	return {"root": root, "label": label}
+
 
 ## 战斗定格时的上下两条。不挡鼠标，继续靠 Enter。
 static func make_battle_banner() -> Dictionary:

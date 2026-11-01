@@ -489,15 +489,32 @@ var _shape: CollisionShape3D = null
 ## 就会漏一个（本项目在"注释/清单漂移"上已经踩过多次）。
 ## ⚠️ 只平移**正值**：0 在本项目的约定里是"没排程"（`_lance_until_ms == 0` = 没在冲刺），
 ## 平移它会把"没有的事"变成"未来某个时刻有事"。
+## ⚠️ 2026-11-01：**属性名单改成只扫一次、之后缓存**（`_ms_props`）。
+## 原先每调一次就 `get_property_list()` 全量扫一遍 —— 暂停补偿每场只调一两次，怎么都行；
+## 可倍速（`MatchSpeed`）是**每物理帧**拉一次 ⇒ 74 个单位 × 每帧全量扫属性会立刻变成新的热点
+##（那正是我们要消灭的东西）。同一个脚本的属性名单是固定的 ⇒ 缓存后逐位等价。
+static var _ms_props: Array = []
+
 func shift_deadlines(delta_ms: int) -> void:
-	if delta_ms <= 0:
+	_shift_ms(delta_ms)
+
+## 倍速那一半：把所有截止时刻**前移** `delta_ms`（正数 = 提前这么多毫秒）。见 `MatchSpeed` 的文件头。
+## ⚠️ 方向记清楚：`shift_deadlines(+Δ)` = 往后推（暂停补偿），`pull_deadlines(+Δ)` = 往前拉（加速）。
+func pull_deadlines(delta_ms: int) -> void:
+	_shift_ms(-delta_ms)
+
+func _shift_ms(delta_ms: int) -> void:
+	if delta_ms == 0:
 		return
-	for prop in get_property_list():
-		var prop_name := String(prop["name"])
-		if not prop_name.begins_with("_") or not prop_name.ends_with("_ms"):
-			continue
-		if int(prop["type"]) != TYPE_INT:
-			continue
+	if _ms_props.is_empty():
+		for prop in get_property_list():
+			var prop_name := String(prop["name"])
+			if not prop_name.begins_with("_") or not prop_name.ends_with("_ms"):
+				continue
+			if int(prop["type"]) != TYPE_INT:
+				continue
+			_ms_props.append(prop_name)
+	for prop_name in _ms_props:
 		var value := int(get(prop_name))
 		if value > 0:
 			set(prop_name, value + delta_ms)

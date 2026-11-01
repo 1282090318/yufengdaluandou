@@ -1624,6 +1624,22 @@
 > ④ **无新信号**（I-34 不涉及）。无拼音、无中英混拼标识符。
 > ⇒ **无冲突、不改任何命名规则、不改任何不变量**。
 
+> ✅ **2026-10-28 审计（"索敌分桶 + 节流开关"，性能优化 A 组）**：
+> **新文件 0、新类 0、新信号 0、新实体 ID 0、新组名 0**。
+> ① **新常量**（`GameConfig`，I-15）：`UNIT_RELOCK_MS`（**0 = 关**），紧跟 `UNIT_QUERY_SLACK_M`。
+> ② **新方法与字段**（snake_case）：`arena._max_query_ring()` / `arena._cell_min_gap_m()` / `arena._purge_nearest_due()`；字段 `arena._nearest_due_ms`（节流表，默认一直是空的）。
+> ③ **无新节点、无新信号**（I-34 不涉及）。无拼音、无中英混拼标识符。
+> ⇒ **无冲突、不改任何命名规则**。⚠️ **不变量**：默认（`UNIT_RELOCK_MS = 0`）一条不动；打开节流会放宽 `04_physics.md#3` 那条"随时 `target` == 最近敌人"，已在那里登记。
+
+> ✅ **2026-11-01 审计（"倍速按钮 / 补给与生命加图案 / 玩法说明"）**：
+> **新文件 2**：`scripts/core/match_speed.gd`（`class_name MatchSpeed`，`extends RefCounted`，与 `MatchPause` 同一种"静态方法仓库"）；`scripts/ui/tutorial_screen.gd`（`class_name TutorialScreen extends CanvasLayer`，与 `CodexScreen` / `SettingsScreen` 同族）。⚠️ **新信号 0、新类枚举 0、新组名 0**。
+> ① **新常量**：`MatchSpeed.NORMAL` / `FAST`（倍速两档，纯表现参数 ⇒ 留脚本，按 §3.3 的"功能域前缀"自成一域）；`TutorialScreen.TUTORIAL_LAYER` / `CHAPTERS` / `SCRIM_COLOR` / `PANEL_MARGIN_X` / `PANEL_MARGIN_Y` / `CHAPTER_COL_W`（层号与排版，与图鉴的 `CODEX_LAYER` 同一类，不进 `GameConfig`）；`UiStyle.SPEED_BUTTON_PX` / `SPEED_CHEVRONS` / `SPEED_SHORTCUT_KEY`（= `KEY_F`，倍速快捷键；⚠️ `1`=技能 / `X`=肩位 / `Q`=交还 / WASD=镜头 / `Space`=cam_up / `Tab`=自由视角 / `Ctrl+Z`=撤销 都已占用，`F` 是空的）/ `STAT_ICON_PX` / `SUPPLY_FILL` / `SUPPLY_LINE` / `HP_FILL`（与 `GEAR_*` 同段）。
+> ② **新方法**：`MatchSpeed.speed()` / `set_speed()` / `toggle()` / `label()` / `tick()`；`MatchPause.pull_deadlines()`（与既有 `shift_deadlines()` 成对：一推一拉）；`Unit3D.pull_deadlines()` / `_shift_ms()`；`Arena.pull_deadlines()`；`UiStyle.supply_texture()` / `heart_texture()` / `make_icon_label()` / `speed_texture()` / `decorate_speed()` / `make_speed_button()` / `_on_speed_pressed()`（私有静态回调，与 `TutorialScreen._on_chapter_pressed()` 同构；三套 HUD 共用同一份接线 ⇒ 具名函数比内联 lambda 好在调用栈里看得出"是谁切的倍速"）；`TutorialScreen.open()` / `close()` / `_show_chapter()` / `_on_chapter_pressed()`。
+> ③ **新字段**：`MatchSpeed._speed` / `_carry_ms`（静态，与 `MatchPause` 无状态那条不冲突 —— 倍速**是**全局状态）；`Unit3D._ms_props`（静态缓存的属性名单）；三套 HUD 各多一个 `_speed_button`（与 `_gear` 同款）。
+> ④ **新节点**（§3.1 PascalCase）：`SpeedButton`；肉鸽顶栏 `SupplyRow` / `HpRow`（**里面的 Label 沿用旧名 `SupplyLabel` / `HpLabel`**，文档与自检按名字找它们）；教程面板 `Root` / `Scrim` / `Panel` / `Box` / `Columns` / `ChapterColumn` / `Chapter_%d`（序号在 `_` 后）/ `BodyScroll` / `Body` / `CameraHint` / `Footer` / `BackButton`。
+> ⑤ **字体 / 资源**：补给箱与心、倍速尖角全是 `Image` 逐像素画的（与 `gear_texture()` 同一手法）⇒ **零外部资源**这条没破。
+> ⇒ **无冲突、不改任何命名规则**。⚠️ **不变量**：倍速**不动** I-13（计时仍是绝对毫秒、仍不随帧率漂移，前移量带余数结转），详见 `05_ui_hud.md#16`。
+
 > ✅ **2026-10-02 审计（"有人的格子才比 / 行进少滑动 / 布兵停更 / 同兵种共用网格 / 样式按需刷新"）**：
 > **新文件 0、新类 0、新信号 0、新实体 ID 0、新组名 0、新节点 0**。
 > ① **新常量**（`GameConfig`，I-15，与 `UNIT_QUERY_*` 同一段）：`UNIT_MARCH_SLIDE_M` / `UNIT_MARCH_BODY_M`。米写在名字里。同段已有的 `UNIT_STAND_SLIDE_SPEED` 是站定不跑滑动的门槛，这次一并记上。

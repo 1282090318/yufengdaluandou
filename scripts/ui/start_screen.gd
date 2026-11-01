@@ -83,6 +83,10 @@ var _settings: SettingsScreen = null
 ## 「图鉴」与「设置」同属第一档。图鉴层号比本层高，关掉就回到这一列。
 var _codex_button: Button = null
 var _codex: CodexScreen = null
+## 「玩法说明」（2026-11-01 新增；用户："开始可以做个介绍，功能和玩法，新手教程"）：
+## 与「图鉴」「设置」同属第一档。玩法说明层号 **22** 高于本层 ⇒ 盖在选项之上，关掉就回到这一列。
+var _tutorial_button: Button = null
+var _tutorial: TutorialScreen = null
 ## 「返回」（2026-09-25 新增）：**在「沙盒模式」下方**（用户口径），只在模式选择那一档出现 ——
 ## 点它**退回到只有「开始游戏」的第一档**（不是退出游戏，也不换场）。
 var _back_button: Button = null
@@ -146,6 +150,10 @@ func _build_options() -> void:
 	_resume_buttons.append(_add_option("竞猜模式", _on_resume_pressed.bind(MODE_QUIZ)))
 	_resume_buttons.append(_add_option("生存模式", _on_resume_pressed.bind(MODE_ROGUELIKE)))
 	_resume_back = _add_option("返回", _on_back_pressed)
+	## 「玩法说明」**追加在最后**：创建顺序 = 显示顺序，而它只在第一档（首页）显示 ⇒ 玩家看到的顺序是
+	## 开始游戏 → 继续游戏 → 设置 → 图鉴 → 玩法说明。⚠️ 不插在「图鉴」后面，是为了**不动前面那些
+	## `Option_%d` 的序号**（文件头记着"序号是固定的 Option_0 … Option_5"，文档也按序号记位）。
+	_tutorial_button = _add_option("玩法说明", _on_tutorial_pressed)
 	_show_tier(0)
 	_paint_continue()
 
@@ -268,6 +276,7 @@ func _show_tier(tier: int) -> void:
 	_continue_button.visible = home
 	_settings_button.visible = home
 	_codex_button.visible = home
+	_tutorial_button.visible = home
 	for button in _mode_buttons:
 		button.visible = fresh
 	_back_button.visible = fresh
@@ -310,6 +319,15 @@ func _on_codex_pressed() -> void:
 		_codex.name = "CodexScreen"
 		add_child(_codex)
 	_codex.open()
+
+func _on_tutorial_pressed() -> void:
+	if _closing or not _input_ready:
+		return
+	if _tutorial == null:
+		_tutorial = TutorialScreen.new()
+		_tutorial.name = "TutorialScreen"
+		add_child(_tutorial)
+	_tutorial.open()
 
 ## 选中某个模式：从这里开始才是**旧版「开始游戏」**的那段流程 ——
 ## 先让背景演示向中心推近，再渐黑；黑透那一刻 `main.gd` 按 `mode_selected` 传来的模式装配。

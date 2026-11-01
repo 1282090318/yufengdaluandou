@@ -145,6 +145,14 @@ func _build_top_bar() -> void:
 	## 齿轮（暂停菜单入口）：**顶栏栏内最右一格**（用户口径）。ESC 是同一个功能的快捷键。
 	## 外观（尺寸 / 图标 / 提示 / 光标）统一由 `UiStyle` 装扮 —— 沙盒 HUD 用的是**同一个**齿轮
 	##（2026-09-25 抽共享，原先这里另有一份 `_gear_texture()`）。
+	## 倍速（2026-11-01，用户："加个加速，放右上角…点击 x2、再点 x1"）：
+	## **插在齿轮左边** —— 齿轮是"顶栏栏内最右一格"（用户口径，见下面那段），新按钮只能往左排。
+	## ⚠️ 倍速**常显**（2026-11-01 修 bug：用户"战斗开始后无法点加速"）：
+	## 战斗中正要用它，而那时光标被 `CameraRig` 锁住 ⇒ 靠快捷键 `F` 切（见 `UiStyle`），
+	## 按钮本身必须一直亮着（`Button.shortcut` 只在可见时才派发），顺便让人看见当前是几倍。
+	_speed_button = UiStyle.make_speed_button("SpeedButton")
+	row.add_child(_speed_button)
+
 	_gear = Button.new()
 	_gear.name = "GearButton"
 	UiStyle.decorate_gear(_gear)
@@ -358,6 +366,7 @@ func _refresh_top() -> void:
 	## 齿轮只在"玩家能用鼠标点"的相位出现：战斗阶段光标被锁在窗口里（`FIGHTING`）⇒ 那时只认 ESC。
 	if _gear != null:
 		_gear.visible = game.phase == Game.Phase.BETTING or game.phase == Game.Phase.ROUND_RESULT
+	## 倍速按钮**不跟着齿轮藏**：它常显（见建它时那条注释），这里就不再动它的可见性。
 
 func _refresh_bet_panel() -> void:
 	var betting := game.phase == Game.Phase.BETTING
@@ -573,6 +582,9 @@ func _on_phase_changed(phase: String) -> void:
 ## 本文件只留两样东西：**那只齿轮**（挂在本 HUD 的顶栏里）与**界面侧契约**（见文件末尾
 ## `pause_allowed()` / `pause_actions()` / `pause_action()`）。
 var _gear: Button = null
+## 倍速按钮（2026-11-01）：**顶栏右端、齿轮左边**。外观与接线都在 `UiStyle.make_speed_button()`
+##（三套 HUD 共用同一份），这里只负责挂上去、以及"跟着齿轮一起显隐"。
+var _speed_button: Button = null
 var _pause: PauseMenu = null
 
 # ---------------------------------------------------------------- 暂停菜单的**界面侧契约**
