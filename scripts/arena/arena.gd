@@ -813,8 +813,16 @@ var _blast_queue: Array = []
 var _storms: Array = []
 var _nearest_of: Dictionary = {}
 var _nearest_solved: bool = false
+## 索敌节流表（2026-10-28 性能优化 A 组）：单位实例 id → 到这个时刻才需要重算最近敌人（绝对毫秒）。
+## ⚠️ **只在 `GameConfig.UNIT_RELOCK_MS > 0` 时才写**：默认是 0 = 关，这张表一直是空的，
+## 于是 `solve_nearest()` 与优化前**逐帧同口径**。
+var _nearest_due_ms: Dictionary = {}
 
 func _physics_process(delta: float) -> void:
+	## 倍速（2026-11-01）：`Engine.time_scale` 只缩放了"走 `delta` 的那一半"（移动 / 物理 / 相机），
+	## 出手节拍 / 冷却 / 比赛上限这些**绝对毫秒**得靠这一步往前拉才跟得上（详见 `MatchSpeed` 文件头）。
+	## ⚠️ 放在最前面：父节点先于单位 ⇒ 这一步一定发生在任何人出手 / 走位之前。1× 时它是个空转的 return。
+	MatchSpeed.tick(delta, get_tree(), self)
 	_tick_presentation_hold()
 	if presentation_frozen:
 		return
@@ -2592,7 +2600,9 @@ func spawn_unit(team: int, type_id: String, at: Vector3, facing: float) -> Unit3
 ## ⚠️ 树暂停**不会停表**（计时一律是绝对毫秒，不变量 I-13）⇒ 暂停期间流逝的时间必须在这里补回来，
 ## 否则赛程倒计时（`match_start_ms`）与"僵持判平"的静默计时（`_last_hit_ms`）都会白白走掉。
 func shift_deadlines(delta_ms: int) -> void:
-	if delta_ms <= 0:
+	## ⚠️ 2026-11-01：**可以传负值了**。倍速（`MatchSpeed`）靠"整体前移"实现，而它复用的正是这一个函数
+	##（见下面的 `pull_deadlines()`）。暂停补偿一路只传正数，行为一字未变。
+	if delta_ms == 0:
 		return
 	if match_start_ms > 0:
 		match_start_ms += delta_ms
@@ -2626,6 +2636,13 @@ func shift_deadlines(delta_ms: int) -> void:
 	for i in range(_intercept_until.size()):
 		if _intercept_until[i] > 0:
 			_intercept_until[i] += delta_ms
+
+## 倍速那一半（2026-11-01）：把上面那些**同一种**绝对时刻整体**前移** `delta_ms`。
+## ⚠️ 直接转调、不另抄一份名单 —— 倍速漏掉哪一个，表现就是"别的都快了、就它还是实时"，
+## 这种**半个加速**比不加还难查。暂停（`+Δ`）与倍速（`-Δ`）走的是同一条名单，永远不会各说各的。
+## 调用点只有一处：`MatchSpeed.tick()`，每个物理帧一次。
+func pull_deadlines(delta_ms: int) -> void:
+	shift_deadlines(-delta_ms)
 
 ## 供相机按 1/2/3 选人时定位（docs/bible/05_ui_hud.md#6-输入映射）
 func units_of_team(team: int) -> Array:
@@ -2784,6 +2801,10 @@ func storm_taken_mult_at(at: Vector3) -> float:
 	return mult
 
 ## 一帧算完所有人的最近敌人。每人只跟身边格子里的敌方名单比，身边没有更近的才往外扩。
+## ⚠️ **2026-10-28 性能优化（A 组）**：`GameConfig.UNIT_RELOCK_MS > 0` 时才启用**节流**
+##（默认 0 = **关** ⇒ 与优化前完全同口径：每人每帧都算）。开着时只有"到期"的人重算，其余沿用上次结果。
+## ⚠️ 它会**动 bible 那条"任何时候 `target` == 最近敌人"的不变式**（最多滞后 `UNIT_RELOCK_MS`），
+## 所以默认是关的；要开必须先 A/B 实测，并在 `04_physics.md#3` 登记清楚。
 func solve_nearest() -> void:
 	_nearest_of.clear()
 	_nearest_solved = true
@@ -2796,19 +2817,75 @@ func solve_nearest() -> void:
 		(sides[unit.team] as Array).append(unit)
 	_match_nearest(sides[0], 1)
 	_match_nearest(sides[1], 0)
+	if GameConfig.UNIT_RELOCK_MS > 0 and _nearest_due_ms.size() > units.size() * 4:
+		_purge_nearest_due()
+
+## 节流表只跟着"还在场上的单位"走：阵亡 / 被 `queue_free()` 的单位留着会一直占位。
+## 攒够一批才清一次（**不是**每帧清 —— 每帧遍历一遍表，省下的时间又还回去了）。
+func _purge_nearest_due() -> void:
+	for uid in _nearest_due_ms.keys():
+		var node := instance_from_id(int(uid))
+		if node == null or not is_instance_valid(node):
+			_nearest_due_ms.erase(uid)
 
 func _match_nearest(seekers: Array, foe_team: int) -> void:
 	if foe_team != 0 and foe_team != 1:
 		return
 	var keys: Array = _open_keys[foe_team]
 	var cells: Dictionary = _open_cells[foe_team]
+	var throttle_ms := int(GameConfig.UNIT_RELOCK_MS)
+	var now := Time.get_ticks_msec() if throttle_ms > 0 else 0
 	for node in seekers:
 		var seeker := node as Unit3D
 		if seeker == null:
 			continue
-		_nearest_of[seeker.get_instance_id()] = _nearest_on_grid(seeker, keys, cells)
+		var uid := seeker.get_instance_id()
+		## 节流（默认关）：这段时间内沿用上一次的结果。
+		## ⚠️ **目标已经不能当目标时必须立刻重算** —— 否则会在 `UNIT_RELOCK_MS` 里一直拿着一个打不到的人，
+		## 那比"晚一点换目标"坏得多。判据直接调 `_enemy_candidate()`：与索敌过滤**同源**，
+		## 别在这里另写一份"还活着吗 / 钻地了吗"，两边一旦不一致，节流就会把死人留着不换。
+		var reuse := false
+		if throttle_ms > 0 and int(_nearest_due_ms.get(uid, 0)) > now:
+			reuse = _enemy_candidate(seeker, seeker.target, seeker.attack_min_reach())
+		if reuse:
+			_nearest_of[uid] = seeker.target
+			continue
+		_nearest_of[uid] = _nearest_on_grid(seeker, keys, cells)
+		if throttle_ms > 0:
+			## 到期时刻**按实例 id 错开**（`%` 是确定性的，不用随机数 ⇒ 回归可复现）：
+			## 否则所有人会在同一帧集体到期 ⇒ 那一帧仍要一次性算完所有人，节流等于白做。
+			## ⚠️ 于是实际重算间隔落在 `UNIT_RELOCK_MS` ~ `2 × UNIT_RELOCK_MS` 之间，这是**故意**的。
+			_nearest_due_ms[uid] = now + throttle_ms + int(uid % throttle_ms)
+
+## 索敌最多往外看几环（方环）。**由本实例的场地尺寸算**，不再是写死的常量 ——
+## 肉鸽把场地放大到 150 m（`half_x` = 75）时，写死的上限会悄悄漏查，
+## 而"漏查"不会报错，表现只是"远处那个人打不到"，极难排查。
+## ⚠️ 下限保留改前的 **48**：单位被击退到边界外时（`_clamp_into_arena()` 只管瞬移类位移，
+## 不保证每帧都夹回来）还能被找到，所以这个上限**只能变宽不能变窄**。
+## ⚠️ 单纯调大它**几乎不花钱**：分桶之后空环是"桶里没东西"直接跳过，不是逐环空转。
+func _max_query_ring() -> int:
+	var by_size := int(ceil(maxf(half_x, half_z) * 2.0 / GameConfig.UNIT_QUERY_CELL)) + 2
+	return maxi(48, by_size)
+
+## 隔了 `ring` 环的那些格子，离 `origin` **至少**这么远（保守下界，只会低估、不会高估）。
+## 相隔 ring 环 ⇒ 中间隔着 ring−1 个整格 ⇒ 至少 (ring−1) × 格子边长。
+## ⚠️ 拿**低估**的下界去剪枝是安全的：被剪掉的格子保证不可能藏着更近的人；
+## 拿高估的下界则会误剪 ⇒ 结果会变。别把它改成"这一环的中心距离"之类的估计值。
+func _cell_min_gap_m(ring: int) -> float:
+	if ring <= 1:
+		return 0.0
+	return float(ring - 1) * GameConfig.UNIT_QUERY_CELL
 
 ## 从有人的最近一圈往外看。上一帧的目标先占着“目前最近”，圈外不可能更近就停。
+## ⚠️ **2026-10-28 性能优化（A 组）：先把有人的格子按"离自己几环"分桶，再逐环由近及远翻**。
+##   改前是"外层逐环 × 内层把 `keys` 全扫一遍、再滤掉不属于这一环的" ⇒ 一次索敌的代价是
+##   **环数 × 非空格子数**：人数一多（非空格子 K 变大）、开战前两军隔得远（环数变大），
+##   就是**近似平方级**。现在只扫 `keys` **一遍**（O(K)），空环因为桶是空的自然跳过。
+## ⚠️ **结果与改前逐位一致**，三条理由（这也是 `debug_autoplay` 那条"锁定最近者 N/N"仍然成立的前提）：
+##   ① 环仍然是**由近及远**；② 桶里是 `append` 进去的 ⇒ **同一环内的先后次序 == `keys` 本来的次序**
+##   （等距时的取舍因此不变）；③ 提前停下的判据（`edge` + `UNIT_QUERY_SLACK_M`）一个字没改。
+##   另有两处**只影响速度、不影响结果**的改动：环上限见 `_max_query_ring()`；
+##   已有目标时，比它还远的格子直接不进桶（`_cell_min_gap_m()` 的保守下界）。
 func _nearest_on_grid(from: Unit3D, keys: Array, cells: Dictionary) -> Unit3D:
 	var origin := from.global_position
 	var min_reach := from.attack_min_reach()
@@ -2821,19 +2898,27 @@ func _nearest_on_grid(from: Unit3D, keys: Array, cells: Dictionary) -> Unit3D:
 	if keys.is_empty():
 		return best
 	var home := _cell_key(origin)
-	var min_ring := 48
+	var max_ring := _max_query_ring()
+	## 已经有目标时，比它还远的格子不可能翻出更近的人 ⇒ 连桶都不用进
+	## （`best` 为空时 `best_d` 是 INF ⇒ 剪枝自然失效，与"没有目标要全查"一致）。
+	var far_gap := sqrt(best_d) + GameConfig.UNIT_QUERY_SLACK_M
+	var ring_keys: Dictionary = {}
 	for key in keys:
 		var cell: Vector2i = key
 		var ring := maxi(absi(cell.x - home.x), absi(cell.y - home.y))
-		if ring < min_ring:
-			min_ring = ring
+		if ring > max_ring:
+			continue
+		if _cell_min_gap_m(ring) > far_gap:
+			continue
+		if not ring_keys.has(ring):
+			ring_keys[ring] = []
+		(ring_keys[ring] as Array).append(cell)
 	var cell_size := GameConfig.UNIT_QUERY_CELL
 	var slack := GameConfig.UNIT_QUERY_SLACK_M
-	for ring in range(min_ring, 48):
-		for key in keys:
-			var cell: Vector2i = key
-			if maxi(absi(cell.x - home.x), absi(cell.y - home.y)) != ring:
-				continue
+	for ring in range(max_ring + 1):
+		if not ring_keys.has(ring):
+			continue
+		for cell in (ring_keys[ring] as Array):
 			var bucket: Array = cells[cell]
 			for node in bucket:
 				var other := _living_unit(node)

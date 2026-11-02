@@ -34,3 +34,18 @@ static func shift_deadlines(tree: SceneTree, arena: Node, camera_rig: Node, delt
 		var unit := node as Unit3D
 		if unit != null:
 			unit.shift_deadlines(delta_ms)
+
+## 倍速那一半（2026-11-01，见 `MatchSpeed` 的文件头）：把"绝对毫秒的截止时刻"整体**前移** `delta_ms`。
+## ⚠️ 与上面 `shift_deadlines()` **方向相反**：那是暂停补偿（往后推 Δ），这是让时间走快（往前拉 Δ）。
+## 调用点只有一处 —— `MatchSpeed.tick()`，每个物理帧一次。
+static func pull_deadlines(tree: SceneTree, arena: Node, delta_ms: int) -> void:
+	if delta_ms <= 0:
+		return
+	if arena != null and arena.has_method("pull_deadlines"):
+		arena.pull_deadlines(delta_ms)
+	if tree == null:
+		return
+	for node in tree.get_nodes_in_group("units"):
+		var unit := node as Unit3D
+		if unit != null:
+			unit.pull_deadlines(delta_ms)

@@ -86,6 +86,9 @@ var _foe_label: Label = null             ## 敌方存活权重（本步恒为 0�
 var _zone_label: Label = null            ## 两条布阵带（南北长边外侧）的一句话口径（2026-09-27 第七块）
 var _squads_label: Label = null          ## 本回合已买几队（第二块新增：上限 `ROGUELIKE_SQUADS_PER_ROUND`）
 var _gear: Button = null
+## 倍速按钮（2026-11-01）：顶栏右端、齿轮左边。外观与接线在 `UiStyle.make_speed_button()`（三套 HUD 共用）。
+## ⚠️ 生存模式的倍速只加速**战斗本身**（回合 / 结算的计时不在那条链上，见 `MatchSpeed` 文件头）。
+var _speed_button: Button = null
 
 var _action_panel: PanelContainer = null
 var _start_bar: PanelContainer = null    ## 顶部中央那颗「开始战斗 / 下一回合」的外壳（2026-09-27 第四轮搬上去）
@@ -236,10 +239,20 @@ func _build_top_bar() -> void:
 	row.add_child(_mode_label)
 	_round_label = _make_label("", FONT_MID, COLOR_TEXT, "RoundLabel")
 	row.add_child(_round_label)
-	_supply_label = _make_label("", FONT_MID, COLOR_WARN, "SupplyLabel")
-	row.add_child(_supply_label)
-	_hp_label = _make_label("", FONT_MID, COLOR_OK, "HpLabel")
-	row.add_child(_hp_label)
+	## 2026-11-01（用户："补给和生命感觉有点不太明显，可以加个图案后跟数字"）：
+	## 两格都改成 **图案 + 数字**。图案由 `UiStyle` 程序化画（零外部资源，与齿轮同一套做法），
+	## 文字只留数字 —— 图案本身已经说明是哪一样。⚠️ 节点**只建一次**（`05_ui_hud.md#7.1`），
+	## 刷新只改 `_supply_label` / `_hp_label` 的 `text`。
+	var supply_row := UiStyle.make_icon_label(UiStyle.supply_texture(), "", FONT_MID, COLOR_WARN, "SupplyRow")
+	_supply_label = (supply_row["label"] as Label)
+	_supply_label.name = "SupplyLabel"          ## 沿用旧节点名：文档与自检里按这个名字找它
+	(supply_row["root"] as Control).tooltip_text = "补给：买兵 / 解锁 / 升级 / 增益 / 道具 / 遣返"
+	row.add_child(supply_row["root"] as Node)
+	var hp_row := UiStyle.make_icon_label(UiStyle.heart_texture(), "", FONT_MID, COLOR_OK, "HpRow")
+	_hp_label = (hp_row["label"] as Label)
+	_hp_label.name = "HpLabel"
+	(hp_row["root"] as Control).tooltip_text = "生命：回合结束时没拦住的敌人会扣它，归零即失败"
+	row.add_child(hp_row["root"] as Node)
 	## 本回合的购买额度（第二块新增）："每回合最多买 2 队"是玩家花钱时最要紧的一条约束。
 	_squads_label = _make_label("", FONT_SMALL, COLOR_DIM, "SquadsLabel")
 	row.add_child(_squads_label)
@@ -255,6 +268,13 @@ func _build_top_bar() -> void:
 	## 第七块：两条**布阵带**（南北长边外侧）的一句话说明（塞在顶栏里 ⇒ **不占额外高度**，见 `DeployHintLabel` 那段的注）
 	_zone_label = _make_label("", FONT_TINY, COLOR_DIM, "ZoneLabel")
 	row.add_child(_zone_label)
+
+	## 倍速（2026-11-01）：插在齿轮左边（齿轮是顶栏最右一格）。
+	## ⚠️ 倍速**常显**（2026-11-01 修 bug：用户"战斗开始后无法点加速"）：
+	## 战斗中正要用它，而那时光标被 `CameraRig` 锁住 ⇒ 靠快捷键 `F` 切（见 `UiStyle`），
+	## 按钮本身必须一直亮着（`Button.shortcut` 只在可见时才派发），顺便让人看见当前是几倍。
+	_speed_button = UiStyle.make_speed_button("SpeedButton")
+	row.add_child(_speed_button)
 
 	_gear = Button.new()
 	_gear.name = "GearButton"
@@ -657,8 +677,9 @@ func _refresh_top() -> void:
 	if roguelike.difficulty_chosen:
 		round_text += " · %s" % GameConfig.roguelike_difficulty_name(roguelike.difficulty)
 	_round_label.text = round_text
-	_supply_label.text = "补给 %d" % roguelike.supply
-	_hp_label.text = "血量 %d / %d" % [roguelike.hp, roguelike.hp_max]
+	## 图案已经说明是哪一样 ⇒ 这里只给数字（"12" / "8 / 20"），不再重复"补给 / 血量"四个字。
+	_supply_label.text = "%d" % roguelike.supply
+	_hp_label.text = "%d / %d" % [roguelike.hp, roguelike.hp_max]
 	_squads_label.text = "本回合 %d / %d 队 · 部队权重 %d" % [
 			roguelike.bought_this_round, roguelike.squad_limit_this_round(),
 			roguelike.squad_weight_total()]
@@ -674,6 +695,7 @@ func _refresh_top() -> void:
 	## ⇒ 那时只认 Esc（与另外两套 HUD 同一条口径）。
 	if _gear != null:
 		_gear.visible = roguelike.phase != Roguelike.Phase.FIGHTING
+	## 倍速按钮**不跟着齿轮藏**：它常显（见建它时那条注释），战斗中也亮着。
 	var holding := roguelike.phase == Roguelike.Phase.ROUND_RESULT or roguelike.phase == Roguelike.Phase.GAME_OVER
 	if _top_bar != null:
 		_top_bar.visible = not holding
