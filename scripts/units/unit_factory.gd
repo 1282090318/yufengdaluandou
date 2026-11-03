@@ -101,6 +101,24 @@ const KITE_ARC_RADIUS := 0.62
 ## 盾缘箍、曲面网格、盾心凸起三处都引用它，避免"改一处漏两处"。
 const KITE_TOP := 0.40
 
+## 剑盾兵**拳心离护手多远**（米，2026-11-03 用户："手要握着剑柄而不是连接处"）。
+## 剑柄圆柱跨局部 z 0.03~0.22（护手在 0、剑首从 0.188 起）、拳掌半径 0.075（沿剑身轴缩放 1.10 ⇒ ±0.0825）
+## ⇒ 取 0.115 正好让拳头整段落在"护手与剑首之间"的柄身上：上沿离护手 0.0325、下沿压在剑首上。
+## ⚠️ 局部 **+Z 是剑柄方向**（武器沿 X 转 +90° 后指向世界的 −Y ⇒ 往下）。
+## ⚠️ **两处共用**这一个数，别各写一份：拳心（`_make_sword_arms()`）与剑抬高的量（`_refine_sword_weapon()`）
+##    —— 剑抬高同样的量，拳心的世界高度才停在原地（肩 / 肘 / 腕那一套坐标不用动）。
+const SWORD_GRIP_OFFSET := 0.115
+
+## 骑士的**大剑握点**（2026-11-03，与剑盾兵同一套口径：拳心落在剑柄上、剑身穿出护肩的空间）。
+##   · x = **0.42**：与剑盾兵同值 —— 躯干虽宽 0.05（0.34 对 0.29），但拳掌离轴线 0.51 已够；
+##   · y = **1.05**：拳心的世界高度（`_refine_knight_weapon()` 把剑抬高 `SWORD_GRIP_OFFSET`，
+##     拳心的局部 +Z 正好抵消 ⇒ 世界高度仍是 1.05，肩 / 肘那套坐标不用跟着动）；
+##   · z = **−0.32**：护肩换成球壳后（球心 (±0.35, 1.37, 0)、z 半宽 0.21），
+##     剑身宽轴半宽 = 0.045 × 1.30 = **0.0585** ⇒ 静止竖直时整段让开只需 |z| ≥ **0.2685**；
+##     但蓄力会把剑往后仰 `UNIT_KNIGHT_COCK_TILT`（0.34 rad），**护肩那一层高度上**的剑身
+##     会再往回退 ≈0.02 ⇒ 取 **0.32**，蓄力时仍留 3 cm 余量（剑盾兵是 0.26，它的护肩窄 0.02）。
+const KNIGHT_GRIP := Vector3(0.42, 1.05, -0.32)
+
 # ---------------------------------------------------------------- 手搓网格
 ## 筝形盾的**连续曲面**（2026-09-24：替掉 7 条折线板，消掉"阶梯感"）。
 ## 轮廓 = 上边齐平且最宽、两侧向下收拢成一点（筝形）；横向沿半径 `KITE_ARC_RADIUS` 的圆弧**前凸**（−Z）。
@@ -173,6 +191,11 @@ const NO_HUMANOID_TYPES := ["catapult", "ballista", "sandworm", "shadow", "pilla
 ## 也不能再用骨架那颗队伍色的胶囊（见 `NO_HUMANOID_TYPES` 的说明）⇒ 整具模型改由 `#shadow` 支自己建，
 ## 顺手把自己的 `Body` 也建了（名字不变 ⇒ 闪白那条路一个字都不动）。
 const HEADLESS_TYPES := ["corruptor", "grenadier"]
+## 已经**自己做五官**的兵种（2026-11-03）：它们各自在精修函数里按自己的护鼻 / 目镜板 / 兜帽窗口
+## 定位眼球（剑盾兵按护鼻、长矛兵按锥盔开口、短弓手按兜帽窗口、骑士是目缝+竖鼻梁、
+## 火焰拳是帽檐下那一对**发光橙眼**）。通用五官 `_add_humanoid_eyes()` 必须跳过这五个 ——
+## 否则脸上会多出一对"第二双眼睛"。
+const FACE_REFINED_TYPES := ["sword", "spear", "shortbow", "knight", "flamefist"]
 ## 载具几何是**按"身体中心"定位**的（轮心 y = −0.06、轮半径 0.34 ⇒ 轮底 −0.40），
 ## 而单位原点在**脚底**（人形躯干在 y = 0.90）⇒ 整台机器陷进地里 0.40 m。
 ## 2026-09-24 用户："修一下那 0.4 m 的下沉" ⇒ 给载具整体抬起本值（米）。
@@ -233,20 +256,27 @@ const MOUNT_HAIR := Color(0.13, 0.11, 0.10)   ## 鬃毛 / 马尾（近黑）
 const MOUNT_BLAZE := Color(0.86, 0.83, 0.76)
 
 const SILHOUETTE := {
-	"sword": {"body_radius": 0.36, "body_height": 1.16, "head_radius": 0.225},
-	"spear": {"body_radius": 0.26, "body_height": 1.34, "head_radius": 0.195},
+	## ⚠️ **2026-11-02 身材调整**（用户："调整一下人物的身材"）：人形躯干的**半径整体收窄约 20%**，
+	## 高度一个数都没动（`CapsuleMesh.height` 是**含两端半球的总高** ⇒ 改半径不会让头顶 / 胯底上下跑，
+	## 头盔、血条挂点、判定体全都不受影响）。改前是"0.72 m 宽 × 1.16 m 高的药丸"，
+	## 与 0.45 m 的头差不多宽，远看像一团；收窄之后"躯干比头宽、比身高窄"这条比例才读得出来。
+	## ⚠️ **秩不许变**（宽 → 窄：武士大师 > 骑士 > 火焰拳 > 剑盾兵 > 扇子兵 > 火枪兵 > 狂战士 >
+	## 短弓手 > 长矛兵 / 长弓手 > 轻骑兵）："体型"是辨识度的第①条通道，只收窄、不重排。
+	## ⚠️ 手雷王（球身）、心灵腐化师（袍内细杆）、影魔（自己建躯干）与四种非人形**一律不动**。
+	"sword": {"body_radius": 0.29, "body_height": 1.16, "head_radius": 0.225},
+	"spear": {"body_radius": 0.22, "body_height": 1.34, "head_radius": 0.195},
 	## 扇子兵（2026-09-18）：比短弓手更矮更圆——宽袍 + 斗笠，远看是一团宽影子
-	"fan": {"body_radius": 0.34, "body_height": 1.10, "head_radius": 0.215},
+	"fan": {"body_radius": 0.28, "body_height": 1.10, "head_radius": 0.215},
 	## 骑士（2026-09-18）：全场最宽——"数值更高的剑盾兵"要在轮廓上也压人一头
-	"knight": {"body_radius": 0.42, "body_height": 1.22, "head_radius": 0.235},
+	"knight": {"body_radius": 0.34, "body_height": 1.22, "head_radius": 0.235},
 	## 投石车 / 弩车（2026-09-18 R2）：**载具**——又矮又粗，头顶不是头盔而是机械
 	"catapult": {"body_radius": 0.52, "body_height": 0.78, "head_radius": 0.220},
 	"ballista": {"body_radius": 0.48, "body_height": 0.70, "head_radius": 0.210},
 	## 狂战士（2026-09-18 R3）：精瘦——上半身裸露（无甲），轮廓靠"左右两把斧"对称撑开
-	"berserker": {"body_radius": 0.30, "body_height": 1.24, "head_radius": 0.200},
+	"berserker": {"body_radius": 0.25, "body_height": 1.24, "head_radius": 0.200},
 	## 火焰拳（2026-09-19 新增 / 同日两轮建模）：**宽肩厚背的拳手**——比剑盾兵宽、比骑士略窄；
 	## 躯干尺寸不变，轮廓改由"黑斗笠（檐半径 0.50，横着比肩还宽）+ 长袍下摆 + 右手的火球"撑开（通道 ①②③）。
-	"flamefist": {"body_radius": 0.39, "body_height": 1.20, "head_radius": 0.215},
+	"flamefist": {"body_radius": 0.32, "body_height": 1.20, "head_radius": 0.215},
 	## 沙虫（2026-09-19 新增，同日第二轮重建）：**不建人形**的 boss —— 2026-09-19 第二轮按用户给的参考图
 	## 重做：正前方橙黄唇环大圆口 + 灰蓝分节身体 + 口周蓝色触须。轮廓靠"大圆口 + 分节身体"读出来。
 	## ⚠️ 这三个数**只作登记**：它的碰撞体现在是 `GameConfig.UNIT_BODY_BOX` 里的**盒体**（实测视觉包围盒），
@@ -257,10 +287,10 @@ const SILHOUETTE := {
 	## 登记值取"眼球那一档"（半径 1.55 / 高 3.10），与判定体盒体的水平等效半径（1.80）大致同量级。
 	"doom_eye": {"body_radius": 1.55, "body_height": 3.10, "head_radius": 0.0},
 	## 短弓手（2026-09-25 由「弓兵」改名）：数值与外形**都没动**，只是 ID 从 `archer` 改成 `shortbow`。
-	"shortbow": {"body_radius": 0.28, "body_height": 1.22, "head_radius": 0.200},
+	"shortbow": {"body_radius": 0.235, "body_height": 1.22, "head_radius": 0.200},
 	## 长弓手（2026-09-25 新增）：**比短弓手更高更窄**——长弓手是"拉大弓的高个子"，
 	## 轮廓靠"高 + 一柄比人还高的长弓"读出来（通道 ①；头盔见 `_headgear()` 的 `"longbow"` 支）。
-	"longbow": {"body_radius": 0.26, "body_height": 1.34, "head_radius": 0.195},
+	"longbow": {"body_radius": 0.22, "body_height": 1.34, "head_radius": 0.195},
 	## 轻骑兵（矛）（2026-09-25 新增 / 同日第三条改骑马）：**精瘦**（0.25 / 1.28）——全场最快（7 m/s）
 	## 的单位要靠"轻"在轮廓上先说出来。⚠️ **2026-09-25 第三条起它是骑马的**（用户："修改轻骑兵建模，
 	## 要骑马"）：马由 `_build_mount()` 现场拼（躯干 / 四腿 / 颈 / 头 / 耳 / 尾 / 队伍色鞍垫），
@@ -268,12 +298,12 @@ const SILHOUETTE := {
 	## 于是这套"人形骨架本来就没有腿"的抽象反而正好成立（原先不骑马时才显得残缺）。
 	## ⚠️ 这三个数**仍只描述骑手的躯干**，与马无关；判定体也**不跟着马变**（用户裁定，见 `MOUNT_*` 段）。
 	## 辨识度现在是三条通道叠加：① 马（全场唯一的四足轮廓）+ ② 前倾盔缨的轻盔 + ③ 3.6 m 冲枪。
-	"lightcav": {"body_radius": 0.25, "body_height": 1.28, "head_radius": 0.195},
+	"lightcav": {"body_radius": 0.215, "body_height": 1.28, "head_radius": 0.195},
 	## 火枪兵（2026-09-25 新增）：**壮实的中等身材**（0.33 / 1.30）—— 比长矛兵与两种弓手都厚一档
 	## （0.26~0.28：扛一支重枪的人不会精瘦），又比剑盾兵 / 火焰拳更高（1.16 / 1.20）。
 	## 第一眼由"一顶翻檐三角帽 + 一支平端的长枪"接手（通道 ②③：头盔见 `_headgear()` 的 `"musket"` 支，
 	## 武器见 `build()` 的 `#musket` 支）。
-	"musket": {"body_radius": 0.33, "body_height": 1.30, "head_radius": 0.205},
+	"musket": {"body_radius": 0.27, "body_height": 1.30, "head_radius": 0.205},
 	## 武士大师（2026-09-25 新增，**第二个 boss 单位**）：**全场最宽最高的人形躯干**（0.50 / 1.46 / 0.26）——
 	## 上一档是骑士（0.42 / 1.22 / 0.235），这里宽 +19%、高 +20% ⇒ "连数值更高的剑盾兵都被它压一头"。
 	## boss 的分量必须在**第一眼**（体型）上就出来，不能等看清武器才认得。
@@ -281,7 +311,7 @@ const SILHOUETTE := {
 	## 三条通道叠加：① 这个体型 + ② 高束发 / 额带 + ③ 一柄 1.26 m 长、带弧度的太刀
 	## （见 `_headgear()` 的 `"master"` 支与 `build()` 的 `#master` 支）。
 	## ⚠️ 判定体仍是人形胶囊 0.38 / 1.80（`GameConfig.UNIT_BODY_CAPSULE_*`）：模型不参与判定，照旧。
-	"master": {"body_radius": 0.50, "body_height": 1.46, "head_radius": 0.26},
+	"master": {"body_radius": 0.40, "body_height": 1.46, "head_radius": 0.26},
 	## 心灵腐化师（2026-09-25 第二轮新增）：**全场最细的躯干**（0.16 / 1.40）——上一档最瘦的是轻骑兵
 	## （0.25 / 1.28）、两种弓手是 0.26~0.28。半径砍到 0.16（比最瘦的还细 **36%**）是为了让
 	## **"袍"接管整个剪影**：这根细杆只是袍子的内衬（也是队伍色的载体，见 `HEADLESS_TYPES`），
@@ -741,6 +771,1954 @@ static func _add_saint_look(visual: Node3D, weapon: Node3D) -> void:
 	guard.visible = false
 	weapon.add_child(guard)
 
+# ---------------------------------------------------------------- 价格 1 兵种的精细建模
+## 2026-11-02：以本地版剑盾兵的精修为基准，统一补齐四个权重 1 兵种的外观细节。
+## 原则：只加纯视觉件，不改骨架尺寸以外的任何判定；小零件按 `UNIT_LOD_HIDE_M` 远裁。
+static func _fine_detail(part: MeshInstance3D) -> MeshInstance3D:
+	part.visibility_range_end = GameConfig.UNIT_LOD_HIDE_M
+	part.visibility_range_end_margin = 4.0
+	return part
+
+static func _polish_metal_finish(part: MeshInstance3D) -> void:
+	var mat := part.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	mat.metallic = 0.62
+	mat.roughness = 0.34
+	mat.emission_energy_multiplier = 0.18
+
+## 剑盾兵：甲片尺寸不动，只收骨架 —— 躯干 0.36 → 0.33、头 0.225 → 0.198。
+## 圆顶盔保持 0.245，让额头完整收进盔内；腰带随躯干收到 0.34。
+static func _shrink_sword_frame(visual: Node3D) -> void:
+	var body := visual.get_node_or_null("Body") as MeshInstance3D
+	if body != null:
+		var body_shape := CapsuleMesh.new()
+		## ⚠️ **2026-11-02**（身材调整）：这里是剑盾兵躯干的**第二份尺寸**（`SILHOUETTE["sword"]` 是第一份）。
+		## 两处必须同数，否则"表里收窄了、模型上没收"（本次就是这么撞了一次）。现在两边都是 0.29 / 1.16。
+		## 收窄的连带账：下面那批贴着旧表面的件（护肩 / 胸甲 / 腰带 / 腰甲）一起往内挪了 0.04 m。
+		body_shape.radius = 0.29
+		body_shape.height = 1.16
+		body_shape.radial_segments = 20
+		body_shape.rings = 8
+		body.mesh = body_shape
+	var head := visual.get_node_or_null("Head") as MeshInstance3D
+	if head != null:
+		var head_shape := SphereMesh.new()
+		head_shape.radius = 0.198
+		head_shape.height = 0.396
+		head_shape.radial_segments = 20
+		head_shape.rings = 10
+		head.mesh = head_shape
+	var nose := visual.get_node_or_null("Nose") as MeshInstance3D
+	if nose != null:
+		var nose_shape := SphereMesh.new()
+		nose_shape.radius = 0.035
+		nose_shape.height = 0.07
+		nose_shape.radial_segments = 12
+		nose_shape.rings = 6
+		nose.mesh = nose_shape
+		nose.scale = Vector3(0.70, 1.0, 1.10)
+		nose.position = Vector3(0.0, 1.505, -0.170)
+
+static func _refine_sword_head(visual: Node3D, metal: Color) -> void:
+	var dome := visual.get_node_or_null("Helmet") as MeshInstance3D
+	if dome != null:
+		var dome_shape := SphereMesh.new()
+		dome_shape.radius = 0.245
+		dome_shape.height = 0.49
+		dome_shape.radial_segments = 20
+		dome_shape.rings = 10
+		dome.mesh = dome_shape
+		_polish_metal_finish(dome)
+	var band := _fine_detail(_mesh("HelmetBand", CylinderMesh.new(), metal.darkened(0.24)))
+	(band.mesh as CylinderMesh).top_radius = 0.25
+	(band.mesh as CylinderMesh).bottom_radius = 0.25
+	(band.mesh as CylinderMesh).height = 0.055
+	(band.mesh as CylinderMesh).radial_segments = 20
+	band.position = Vector3(0.0, 1.59, 0.03)
+	visual.add_child(band)
+	var nasal := _fine_detail(_mesh("HelmetNasal", BoxMesh.new(), metal.lightened(0.08)))
+	(nasal.mesh as BoxMesh).size = Vector3(0.05, 0.19, 0.045)
+	nasal.position = Vector3(0.0, 1.57, -0.212)
+	visual.add_child(nasal)
+	var ridge := _fine_detail(_mesh("HelmetRidge", BoxMesh.new(), metal.lightened(0.12)))
+	(ridge.mesh as BoxMesh).size = Vector3(0.045, 0.055, 0.34)
+	ridge.position = Vector3(0.0, 1.915, 0.03)
+	visual.add_child(ridge)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var cheek := _fine_detail(_mesh("HelmetCheek_%s" % side, BoxMesh.new(), metal.darkened(0.12)))
+		(cheek.mesh as BoxMesh).size = Vector3(0.065, 0.22, 0.18)
+		cheek.position = Vector3(direction * 0.205, 1.49, -0.005)
+		cheek.rotation = Vector3(0.0, 0.0, -direction * 0.12)
+		visual.add_child(cheek)
+	## 2026-11-03（用户："建模像已发售的游戏"）：圆顶盔扣到眉骨，**露出来的脸是一块空白的肤色**
+	## （正面看是"一颗银球下面一条肉色带"）。补两只**眼睛**（在 `_refine_sword_armor()` 里做 ——
+	## 必须在 `_shrink_sword_frame()` **之后**，否则读到的是收窄前的护鼻坐标）。
+
+static func _refine_sword_armor(visual: Node3D, metal: Color, wood: Color, base: Color) -> void:
+	_shrink_sword_frame(visual)
+	## 眼睛（2026-11-03）：贴着护鼻往上 0.048、左右 0.062。护鼻本来就贴在脸面上，
+	## 跟着它走一定落在露出来的那条脸上，不用猜头心。
+	var nose_point := Vector3(0.0, 1.505, -0.170)
+	var nose_node := visual.get_node_or_null("Nose") as MeshInstance3D
+	if nose_node != null:
+		nose_point = nose_node.position
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var eye := _fine_detail(_mesh("Eye_%s" % side, SphereMesh.new(), metal.darkened(0.82)))
+		(eye.mesh as SphereMesh).radius = 0.024
+		(eye.mesh as SphereMesh).height = 0.048
+		(eye.mesh as SphereMesh).radial_segments = 10
+		(eye.mesh as SphereMesh).rings = 6
+		eye.scale = Vector3(1.0, 1.15, 0.55)
+		eye.position = nose_point + Vector3(direction * 0.062, 0.048, -0.014)
+		visual.add_child(eye)
+	var dark_metal := metal.darkened(0.24)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var pad := visual.get_node_or_null("ShoulderPad_%s" % side) as MeshInstance3D
+		if pad != null:
+			var shell := SphereMesh.new()
+			shell.radius = 0.19
+			shell.height = 0.38
+			shell.radial_segments = 16
+			shell.rings = 8
+			pad.mesh = shell
+			pad.scale = Vector3(1.15, 0.55, 1.0)
+			pad.position = Vector3(direction * 0.30, 1.35, 0.0)
+			## 2026-11-03：护肩原本也是抛光的银色 ⇒ 头盔 + 双肩 + 胸甲 + 盾缘全是同一种银，
+			## 上半身糊成一片、队伍色只剩裙子。改成**烤漆钢**（吃队伍色、仍带金属反光）：
+			## 红肩 / 银盔 / 红盾 / 红裙一次把色块排开，远看才不像一坨金属。
+			var pad_mat := pad.material_override as StandardMaterial3D
+			if pad_mat != null:
+				pad_mat.albedo_color = base.darkened(0.06)
+				pad_mat.metallic = 0.38
+				pad_mat.roughness = 0.44
+			## 改完之后这已经是一块**队伍色** ⇒ 名字换成 `TeamAccent` 前缀，
+			## 策反（心灵腐化）换边时才会被 `unit3d.gd#_repaint_team_accents()` 一起重绘。
+			pad.name = "TeamAccent_ShoulderPad_%s" % side
+			## 同理：护肩是 `base.darkened(0.06)`（烤漆钢），把这点压暗量随件带过去
+			pad.set_meta("accent_tint", -0.06)
+			var trim := _fine_detail(_mesh("ShoulderTrim_%s" % side, BoxMesh.new(), dark_metal))
+			(trim.mesh as BoxMesh).size = Vector3(0.24, 0.045, 0.34)
+			trim.position = Vector3(direction * 0.30, 1.29, 0.0)
+			visual.add_child(trim)
+			var rivet := _fine_detail(_mesh("ShoulderRivet_%s" % side, SphereMesh.new(), metal.lightened(0.18)))
+			(rivet.mesh as SphereMesh).radius = 0.026
+			(rivet.mesh as SphereMesh).height = 0.052
+			rivet.position = Vector3(direction * 0.30, 1.39, -0.155)
+			visual.add_child(rivet)
+		var bracer := _mesh("Bracer_%s" % side, CapsuleMesh.new(), dark_metal)
+		(bracer.mesh as CapsuleMesh).radius = 0.085
+		(bracer.mesh as CapsuleMesh).height = 0.30
+		(bracer.mesh as CapsuleMesh).radial_segments = 12
+		bracer.position = Vector3(direction * 0.36, 1.03, 0.02)
+		bracer.rotation = Vector3(0.0, 0.0, -direction * 0.12)
+		_polish_metal_finish(bracer)
+		visual.add_child(bracer)
+	var breastplate := _mesh("Breastplate", BoxMesh.new(), metal.darkened(0.08))
+	(breastplate.mesh as BoxMesh).size = Vector3(0.44, 0.42, 0.06)
+	breastplate.position = Vector3(0.0, 1.09, -0.305)
+	_polish_metal_finish(breastplate)
+	visual.add_child(breastplate)
+	var chest_ridge := _fine_detail(_mesh("BreastplateRidge", BoxMesh.new(), metal.lightened(0.16)))
+	(chest_ridge.mesh as BoxMesh).size = Vector3(0.045, 0.34, 0.025)
+	chest_ridge.position = Vector3(0.0, 1.09, -0.347)
+	visual.add_child(chest_ridge)
+	var chest_trim := _fine_detail(_mesh("BreastplateTrim", BoxMesh.new(), metal.lightened(0.12)))
+	(chest_trim.mesh as BoxMesh).size = Vector3(0.46, 0.045, 0.035)
+	chest_trim.position = Vector3(0.0, 1.285, -0.325)
+	visual.add_child(chest_trim)
+	var belt := _mesh("WarBelt", CylinderMesh.new(), wood.darkened(0.35))
+	(belt.mesh as CylinderMesh).top_radius = 0.30
+	(belt.mesh as CylinderMesh).bottom_radius = 0.30
+	(belt.mesh as CylinderMesh).height = 0.085
+	(belt.mesh as CylinderMesh).radial_segments = 20
+	belt.position = Vector3(0.0, 0.82, 0.0)
+	visual.add_child(belt)
+	var buckle := _fine_detail(_mesh("BeltBuckle", BoxMesh.new(), metal.lightened(0.20)))
+	(buckle.mesh as BoxMesh).size = Vector3(0.10, 0.075, 0.035)
+	buckle.position = Vector3(0.0, 0.82, -0.31)
+	visual.add_child(buckle)
+	for i in 3:
+		var fauld := _mesh("Fauld_%d" % i, BoxMesh.new(), dark_metal)
+		(fauld.mesh as BoxMesh).size = Vector3(0.40 - 0.04 * float(i), 0.075, 0.05)
+		fauld.position = Vector3(0.0, 0.72 - 0.10 * float(i), -0.305 + 0.025 * float(i))
+		_polish_metal_finish(fauld)
+		visual.add_child(fauld)
+	var gorget := _mesh("Gorget", TorusMesh.new(), dark_metal)
+	(gorget.mesh as TorusMesh).inner_radius = 0.17
+	(gorget.mesh as TorusMesh).outer_radius = 0.24
+	(gorget.mesh as TorusMesh).rings = 20
+	(gorget.mesh as TorusMesh).ring_segments = 8
+	gorget.position = Vector3(0.0, 1.39, 0.0)
+	_polish_metal_finish(gorget)
+	visual.add_child(gorget)
+
+static func _refine_sword_weapon(weapon: Node3D, metal: Color, wood: Color) -> void:
+	## 2026-11-03（用户："拿着剑要刀刃朝前，砍下去也要刀刃朝前"）——**刃口朝向**由**网格本身**负责：
+	## `_sword_blade_mesh()` 的菱形截面现在**宽轴在局部 Y**（±0.045 = 两条刃口）、薄轴在局部 X（±0.018 = 两个剑面）。
+	## 武器沿 X 转 +90° 后：宽轴 → **世界 Z**（刃口朝前后）、薄轴 → 世界 X（正面看到的是 1.6 cm 的刃线）⇒ 刃口朝前。
+	## ⚠️ **为什么改网格、而不是给武器加一道 90° 滚转**（早一版就是这么做的，已推翻）：
+	##    滚转是**整棵子树**一起转 —— 护手横杆、`Hilt`、拳头上的拇指与腕箍全跟着转 90°。
+	##    手一挪到剑柄上（护手就落在拳头上方一格），转过去的护手横杆正好**捅进前臂**（手臂从肘斜下来握拳，
+	##    正好占住护手朝后的那一段）；改网格则只动剑身，外壳件的朝向一格不变。
+	##    出手时武器仍只绕世界 X 往前压 ⇒ 刃口跟着整把剑留在劈砍平面里（命中帧剑身转平 = 刃口朝下）。
+	## 2026-11-03（用户："剑穿了肩甲的膜"）——**握点让开护肩**：
+	## 护肩是个球壳（球心 (±0.30, 1.35, 0)、半径 0.2185 / 0.1045 / 0.19，见 `#_refine_sword_armor()` 那一段），
+	## 而剑身是从护手往**正上方**长出去的 ⇒ 原来握点 z = −0.10 时，剑身在 y 1.27~1.43 那一段**整段埋在壳里**
+	##（正面看不出、斜着看就是"剑穿了肩甲"）。
+	## 剑身的 z 半宽 = **0.045**（宽轴）⇒ 整段让开只需 **|z| ≥ 0.19 + 0.045 = 0.235**，
+	## 取 **−0.26**（留 25 mm 余量），同时 x 0.36 → **0.42** 让肩、肘、腕折成一条自然的斜线。
+	## ⚠️ 蓄力那一支**不再把握点往身后收**（`GameConfig.UNIT_SWORD_COCK_BACK` 0.10 → 0），否则又拖回壳里。
+	## 2026-11-03（用户："手要握着剑柄而不是连接处"）——**拳头落在剑柄上**：
+	## 剑柄圆柱在局部 z 0.03~0.22（= 世界 y 往下 1.135~0.945）、剑首从 0.188 起 ⇒ 拳心取 `SWORD_GRIP_OFFSET`。
+	## 整把剑**抬高同样的量**：拳头的世界高度仍停在 1.05 ⇒ 肩 / 肘 / 腕那一套坐标不用跟着动，
+	## 护手则正好落在拳头上方一格（真实握剑就是这个样子）。
+	weapon.position = Vector3(0.42, 1.05 + SWORD_GRIP_OFFSET, -0.26)
+	var blade := weapon.get_node_or_null("Blade") as MeshInstance3D
+	if blade != null:
+		blade.mesh = _sword_blade_mesh()
+		blade.position = Vector3.ZERO
+		_polish_metal_finish(blade)
+		(blade.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+		## 血槽贴在**两个剑面**上：截面换成"宽轴 Y"之后，剑面朝 ±X（原来是 ±Y）⇒ 血槽跟着换到 X 两侧
+		##（节点名也从 top / bottom 改成 left / right —— 它现在真的在剑身的左右两面）。
+		for side in ["left", "right"]:
+			var direction := -1.0 if side == "left" else 1.0
+			var fuller := _fine_detail(_mesh("BladeFuller_%s" % side, BoxMesh.new(), metal.darkened(0.38)))
+			(fuller.mesh as BoxMesh).size = Vector3(0.006, 0.016, 0.56)
+			fuller.position = Vector3(direction * 0.020, 0.0, -0.37)
+			blade.add_child(fuller)
+	var hilt := weapon.get_node_or_null("Hilt") as MeshInstance3D
+	if hilt != null:
+		_polish_metal_finish(hilt)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var quillon := _fine_detail(_mesh("Quillon_%s" % side, BoxMesh.new(), metal.lightened(0.10)))
+		(quillon.mesh as BoxMesh).size = Vector3(0.12, 0.05, 0.065)
+		quillon.position = Vector3(direction * 0.135, 0.0, 0.0)
+		quillon.rotation = Vector3(0.0, 0.0, direction * 0.18)
+		weapon.add_child(quillon)
+	var grip := _mesh("SwordGrip", CylinderMesh.new(), wood.darkened(0.20))
+	(grip.mesh as CylinderMesh).top_radius = 0.032
+	(grip.mesh as CylinderMesh).bottom_radius = 0.032
+	(grip.mesh as CylinderMesh).height = 0.19
+	(grip.mesh as CylinderMesh).radial_segments = 10
+	grip.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	grip.position = Vector3(0.0, 0.0, 0.125)
+	weapon.add_child(grip)
+	var pommel := _fine_detail(_mesh("SwordPommel", SphereMesh.new(), metal.lightened(0.12)))
+	(pommel.mesh as SphereMesh).radius = 0.052
+	(pommel.mesh as SphereMesh).height = 0.104
+	pommel.position = Vector3(0.0, 0.0, 0.24)
+	weapon.add_child(pommel)
+
+static func _refine_sword_shield(shield_pivot: Node3D, metal: Color, base: Color) -> void:
+	var dark_metal := metal.darkened(0.20)
+	var plate := shield_pivot.get_node_or_null("ShieldPlate") as MeshInstance3D
+	if plate != null:
+		## 2026-11-03（用户："建模像已发售的游戏"）：盾面原先用 `base.lightened(0.55)` ⇒
+		## 红队的盾读成**淡粉**、整块像塑料板。现在只提亮 0.20（队伍色读得出来），
+		## 厚度 0.10 → 0.07，包边 / 十字 / 铆钉才立得出来（它们原来几乎是嵌在板子里的）。
+		(plate.mesh as BoxMesh).size = Vector3(0.58, 0.80, 0.07)
+		var mat := plate.material_override as StandardMaterial3D
+		mat.albedo_color = base.lightened(0.20)
+		mat.metallic = 0.28
+		mat.roughness = 0.52
+		## 盾面从此是一块**队伍色** ⇒ 名字换成 `TeamAccent` 前缀，策反换边时才会被重绘
+		## （与躯干同源的那条口径：别的兵种的队伍色都穿在躯干上，换边由受击闪白那一路顺带改写）。
+		plate.name = "TeamAccent_ShieldPlate"
+		## ⚠️ 换边重绘会把 albedo 直接写成纯队伍色 ⇒ 用 meta 把"提亮 0.20"这件事一起带过去，
+		## 否则 `_ready()` 那一遍就把上面的 lightened(0.20) 抹平，盾又和躯干糊成一块
+		## （`unit3d.gd#_repaint_team_accents()` 读的就是这个键）。
+		plate.set_meta("accent_tint", 0.20)
+		## 盾背一圈**暗钢**衬板（比盾面四周各宽 0.02，不吃队伍色）：从侧面 / 斜上方看有一条硬边，盾就有了厚度。
+		var backing := _fine_detail(_mesh("ShieldBacking", BoxMesh.new(), metal.darkened(0.62)))
+		(backing.mesh as BoxMesh).size = Vector3(0.62, 0.84, 0.035)
+		backing.position = Vector3(0.0, 0.0, 0.040)
+		shield_pivot.add_child(backing)
+	var rim_specs := [
+		["top", Vector3(0.58, 0.05, 0.035), Vector3(0.0, 0.375, -0.035)],
+		["bottom", Vector3(0.58, 0.05, 0.035), Vector3(0.0, -0.375, -0.035)],
+		["left", Vector3(0.05, 0.75, 0.035), Vector3(-0.265, 0.0, -0.035)],
+		["right", Vector3(0.05, 0.75, 0.035), Vector3(0.265, 0.0, -0.035)],
+	]
+	for spec in rim_specs:
+		var rim := _fine_detail(_mesh("ShieldFrame_%s" % spec[0], BoxMesh.new(), dark_metal))
+		(rim.mesh as BoxMesh).size = spec[1]
+		rim.position = spec[2]
+		_polish_metal_finish(rim)
+		shield_pivot.add_child(rim)
+	var mark_vertical := _fine_detail(_mesh("ShieldMarkVertical", BoxMesh.new(), metal.lightened(0.22)))
+	(mark_vertical.mesh as BoxMesh).size = Vector3(0.055, 0.42, 0.025)
+	mark_vertical.position = Vector3(0.0, 0.015, -0.048)
+	shield_pivot.add_child(mark_vertical)
+	var mark_horizontal := _fine_detail(_mesh("ShieldMarkHorizontal", BoxMesh.new(), metal.lightened(0.22)))
+	(mark_horizontal.mesh as BoxMesh).size = Vector3(0.32, 0.055, 0.025)
+	mark_horizontal.position = Vector3(0.0, 0.11, -0.049)
+	shield_pivot.add_child(mark_horizontal)
+	for x_sign in [-1.0, 1.0]:
+		for y_sign in [-1.0, 1.0]:
+			var rivet := _fine_detail(_mesh("ShieldRivet_%d_%d" % [int(x_sign), int(y_sign)],
+					SphereMesh.new(), metal.lightened(0.18)))
+			(rivet.mesh as SphereMesh).radius = 0.022
+			(rivet.mesh as SphereMesh).height = 0.044
+			rivet.position = Vector3(x_sign * 0.225, y_sign * 0.325, -0.050)
+			shield_pivot.add_child(rivet)
+	var boss := shield_pivot.get_node_or_null("ShieldBoss") as MeshInstance3D
+	if boss != null:
+		_polish_metal_finish(boss)
+		boss.position = Vector3(0.0, 0.12, -0.075)   ## 跟着盾面收薄，凸起量不变
+
+## 菱形截面的双刃剑：剑根与旧方块剑相同，剑尖收束到原来的 −0.95 m。
+## ⚠️ **2026-11-03**：截面**转 90°**（宽轴从局部 X 挪到局部 Y）—— 用户："拿着剑要刀刃朝前，砍下去也要刀刃朝前"。
+## 武器沿 X 转 +90° 后：**宽轴 → 世界 Z**（两条刃口朝前 / 朝后）、薄轴 → 世界 X（两个剑面朝左右）
+## ⇒ 正面看到的是 1.6 cm 的刃线（原来是一块 9 cm 宽的"板"），下劈时刃口正对劈下去的方向。
+## 顶点顺序仍是**顺时针**（top → right → bottom → left），所以下面那行 `(-edge.y, edge.x)` 算出来的法线照样朝外。
+static func _sword_blade_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings := [
+		[Vector3(0.0, 0.045, 0.0), Vector3(0.018, 0.0, 0.0), Vector3(0.0, -0.045, 0.0),
+				Vector3(-0.018, 0.0, 0.0)],
+		[Vector3(0.0, 0.045, -0.76), Vector3(0.018, 0.0, -0.76),
+				Vector3(0.0, -0.045, -0.76), Vector3(-0.018, 0.0, -0.76)],
+	]
+	for side in 4:
+		var next := (side + 1) % 4
+		var edge: Vector3 = rings[0][next] - rings[0][side]
+		var normal := Vector3(-edge.y, edge.x, 0.0).normalized()
+		st.set_normal(normal)
+		st.add_vertex(rings[0][side])
+		st.add_vertex(rings[0][next])
+		st.add_vertex(rings[1][next])
+		st.add_vertex(rings[0][side])
+		st.add_vertex(rings[1][next])
+		st.add_vertex(rings[1][side])
+		st.add_vertex(rings[1][side])
+		st.add_vertex(rings[1][next])
+		st.add_vertex(Vector3(0.0, 0.0, -0.95))
+	st.set_normal(Vector3(0.0, 0.0, 1.0))
+	for side in 4:
+		st.add_vertex(rings[0][side])
+		st.add_vertex(Vector3.ZERO)
+		st.add_vertex(rings[0][(side + 1) % 4])
+	return st.commit()
+
+static func _refine_sword_model(visual: Node3D, weapon: Node3D, shield_pivot: Node3D,
+		base: Color, metal: Color, wood: Color, skin: Color) -> void:
+	_refine_sword_head(visual, metal)
+	_refine_sword_armor(visual, metal, wood, base)
+	_refine_sword_weapon(weapon, metal, wood)
+	_refine_sword_shield(shield_pivot, metal, base)
+	_make_sword_arms(visual, base, skin, wood, weapon, shield_pivot)
+	## 鼻尖改**肤色**（2026-11-03 用户："把剑盾兵的鼻子变到和皮肤相同的颜色"）。
+	## `_shrink_sword_frame()` 只把它缩成一颗 r 0.035 的小球，底色仍是队伍的 `base`
+	## ⇒ 渲染出来是一颗红鼻头。改在这里而不是 `_shrink_sword_frame()` 里，是因为那只函数
+	## 拿不到 `skin`（它由 `_refine_sword_armor()` 调用，参数里没有肤色）。
+	## ⚠️ 它**不是**队伍色锚点：肤色两队一致，所以不加 `TeamAccent` 前缀、不写 `accent_tint`
+	##（写了反而会在策反换边时被刷成队伍色）。
+	var sword_nose := visual.get_node_or_null("Nose") as MeshInstance3D
+	if sword_nose != null:
+		(sword_nose.material_override as StandardMaterial3D).albedo_color = skin
+
+## 通用五官（2026-11-03，用户："把剩下的角色都按照剑盾兵这样来更新建模"）。
+## 只做**一对眼球** —— 其余六件（甲片分层 / 队伍色锚点 / 护腕 / 武器 …）各兵种形态不同，仍逐个做。
+## ⚠️ 眼位**由头球实测半径反解**，不写死 z：骨架头半径 0.195~0.235 有五种，
+##    写死 −0.184 的话大头（0.235）会把眼睛整个吞进去、小头（0.195）会让眼睛浮在脸前面。
+## ⚠️ 定位基准是 `Head.position`（骑乘兵种的头挂在 `Rider` 下、带抬升量），不是世界原点。
+static func _add_humanoid_eyes(parent: Node3D, metal: Color) -> void:
+	var head := parent.get_node_or_null("Head") as MeshInstance3D
+	if head == null or not (head.mesh is SphereMesh):
+		return
+	var radius := (head.mesh as SphereMesh).radius
+	## 眼位与剑盾兵同一档：头心上方 0.048、左右 0.062（`y = 1.62 + 0.048`）。
+	var lateral := 0.062
+	var rise := 0.048
+	## z：球面方程 z = −√(r² − rise² − lateral²)，再往前挪 0.012 ⇒ 眼球露出半个球面。
+	var depth := sqrt(maxf(radius * radius - rise * rise - lateral * lateral, 0.0004))
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var eye := _fine_detail(_mesh("Eye_%s" % side, SphereMesh.new(), metal.darkened(0.82)))
+		(eye.mesh as SphereMesh).radius = 0.024
+		(eye.mesh as SphereMesh).height = 0.048
+		(eye.mesh as SphereMesh).radial_segments = 10
+		(eye.mesh as SphereMesh).rings = 6
+		eye.scale = Vector3(1.0, 1.15, 0.55)
+		eye.position = head.position + Vector3(direction * lateral, rise, -(depth + 0.012))
+		parent.add_child(eye)
+
+## 护腕（通用）：挂到**前臂**节点下 ⇒ `unit3d.gd#_update_arm_pose()` 每帧重摆前臂时它跟着走。
+## 没有前臂的兵种（载具 / 无臂）自动跳过。
+static func _add_forearm_bracers(visual: Node3D, color: Color, radius: float, height: float) -> void:
+	for side in ["left", "right"]:
+		var forearm := visual.get_node_or_null("Forearm_%s" % side) as MeshInstance3D
+		if forearm == null:
+			continue
+		var bracer := _fine_detail(_mesh("Bracer_%s" % side, CapsuleMesh.new(), color))
+		(bracer.mesh as CapsuleMesh).radius = radius
+		(bracer.mesh as CapsuleMesh).height = height
+		(bracer.mesh as CapsuleMesh).radial_segments = 10
+		(bracer.mesh as CapsuleMesh).rings = 3
+		bracer.position = Vector3.ZERO
+		forearm.add_child(bracer)
+
+## 骑士（knight）：把剑盾兵那一套精修**按更重的档位**重做一遍
+##（2026-11-03，用户："模仿剑盾兵把剩下的角色的建模和战斗动画都更新一下"）。
+## 骨架**不减肥** —— 它本来就是"全场最宽"（`SILHOUETTE` 的 0.34 / 1.22 一位不动），
+## 所以每件甲片的坐标都按 **0.34** 那条截面重算，而不是照抄剑盾兵的 0.29。
+## ⚠️ 大盔是**封闭式**的（`GreatHelm` 圆柱从 y 1.46 起就盖住脸）⇒ 骑士的"五官"是
+##   **两个目缝眼位**（`Eye_left` / `Eye_right`）+ 竖鼻梁，与剑盾兵贴在肉脸上的眼球同一条口径：
+##   "远看有眼睛、近看有工艺"，只是载体从眼珠换成了盔缝。
+static func _refine_knight_model(visual: Node3D, weapon: Node3D, shield_pivot: Node3D,
+		base: Color, metal: Color, wood: Color) -> void:
+	_refine_knight_head(visual, base, metal)
+	_refine_knight_armor(visual, base, metal, wood)
+	_refine_knight_weapon(weapon, metal, wood)
+	_refine_knight_shield(shield_pivot, base, metal)
+	## 拳心落在剑柄上（与剑盾兵共用 `SWORD_GRIP_OFFSET`）：手已经挂在 `Sword` 下，
+	## `_add_arms()` 建出来的局部坐标是武器原点（= 护手那一格）⇒ 只往 +Z 挪一段。
+	var sword_hand := weapon.get_node_or_null("Hand_right") as Node3D
+	if sword_hand != null:
+		sword_hand.position = Vector3(0.0, 0.0, SWORD_GRIP_OFFSET)
+		## ⚠️ 腕箍（`WristCuff`，`_make_grip_hand()` 摆在手掌局部 −Y）在剑这个握法里
+		## = 世界的 **−Z（正前方）**；搬到护手那一格之后仍是一个**轴向朝 Z 的圆盘**，
+		## 和护手挤成一团棕色块（实测 `knight_hand.png`）。骑士这一侧的腕子由**护腕**（`Bracer_*`）负责，
+		## 所以这里直接隐藏 —— 不删节点，`_update_arm_pose()` 和其它兵种的口径不受影响。
+		var wrist_cuff := sword_hand.get_node_or_null("WristCuff") as Node3D
+		if wrist_cuff != null:
+			wrist_cuff.visible = false
+	## 握盾的手按盾枢轴的局部坐标钉住（盾面朝 −Z、手掌贴在盾背）。
+	## ⚠️ `_add_arms()` 把握持手一律挂到**武器**下（它只有"握武器 / 空手"两档，没有第三档），
+	## 而骑士的左手握的是**盾枢轴** ⇒ 这里先把它从剑上摘下来再挂到盾上。
+	## 不搬的话手会停在"剑的局部坐标"里 —— 实测偏到世界 (−0.34, 1.075, −0.60)，
+	## 站在盾后面 0.22 m 的空中，前臂每帧还会被 `_update_arm_pose()` 接过去。
+	var shield_hand := weapon.get_node_or_null("Hand_left") as Node3D
+	if shield_hand == null:
+		shield_hand = visual.get_node_or_null("Hand_left") as Node3D
+	if shield_hand != null:
+		var old_parent := shield_hand.get_parent()
+		## ⚠️ 用 `remove_child` + `add_child` 而不是 `reparent()`：这一段跑在**还没进场景树**的
+		## 模板节点上（`_build_fresh()`），`reparent()` 的"保留世界变换"在树外没有意义、
+		## 也不该在这里被悄悄套用一次 —— 手的局部坐标下面一行就要显式写。
+		if old_parent != null and old_parent != shield_pivot:
+			old_parent.remove_child(shield_hand)
+			shield_pivot.add_child(shield_hand)
+		shield_hand.position = Vector3(0.0, 0.01, 0.08)
+
+## 大盔的细化。盔体是**近直的一段筒身**（底 r 0.260 @ y 1.46、顶 r 0.245 @ y 1.80、中心 z 0.03）
+## 加一顶等径圆顶（顶到 y 1.96）；下面每个贴面件的 z 都按筒身面算
+##（不是头心 —— 头心在 1.62 z 0，与盔面差 3 cm ⇒ 贴不住）。
+static func _refine_knight_head(visual: Node3D, base: Color, metal: Color) -> void:
+	## ⚠️ **2026-11-03 实测抓到两处穿透**（无头渲染对照 `knight_head.png`）：
+	##  ① 骑士的 `Head` 球（r 0.235、圆心 z 0）比大盔的**前表面**（z −0.208）还靠前 2.7 cm
+	##    ⇒ 一颗肤色的球从盔里"长"出来、围成一圈扇贝边，把目缝整个埋住；
+	##  ② `Nose`（队伍色方块，z 跨 −0.31~−0.09）直接捅穿盔面，在目缝位置露出一块红方块。
+	##  修法：**头缩到 0.19 并挪到盔的同一条轴（z 0.03）**，鼻尖**隐藏**（大盔没有"鼻子"，
+	##  朝向标记由目缝 + 竖鼻梁承担）。两个都是纯表现节点 —— `unit3d.gd` 只找 `Body` 做受击闪白。
+	var head := visual.get_node_or_null("Head") as MeshInstance3D
+	if head != null:
+		var head_shape := SphereMesh.new()
+		head_shape.radius = 0.19
+		head_shape.height = 0.38
+		head_shape.radial_segments = 20
+		head_shape.rings = 10
+		head.mesh = head_shape
+		head.position = Vector3(0.0, 1.62, 0.03)
+	var nose := visual.get_node_or_null("Nose") as MeshInstance3D
+	if nose != null:
+		nose.visible = false
+	## 大盔本体：出厂的圆台是 **1.46~1.98、底 0.255 / 顶 0.20**（又高又收），
+	## 配上 10 条边，渲染出来是一顶"铁桶"。这里把它改成**矮而直**的一段筒身
+	##（1.46~1.80、底 0.260 / 顶 0.245、24 边）+ 下面一顶等径圆顶 ⇒ 大盔的正确轮廓：
+	## 直筒压到眉骨、圆顶收在头顶，宽度不往上收（"数值更高的剑盾兵"要靠**块头**压人，不靠高度）。
+	var great_helm := visual.get_node_or_null("GreatHelm") as MeshInstance3D
+	if great_helm != null and great_helm.mesh is CylinderMesh:
+		var helm_mesh := great_helm.mesh as CylinderMesh
+		helm_mesh.top_radius = 0.245
+		helm_mesh.bottom_radius = 0.260
+		helm_mesh.height = 0.34
+		helm_mesh.radial_segments = 24
+		great_helm.position = Vector3(0.0, 1.63, 0.03)
+		_polish_metal_finish(great_helm)
+	## 盔顶圆顶：半径与筒身顶边**同值**（0.245）⇒ 接缝处齐平，不会出现"桶盖"。
+	var crown := _fine_detail(_mesh("HelmCrown", SphereMesh.new(), metal.darkened(0.04)))
+	var crown_shape := crown.mesh as SphereMesh
+	crown_shape.radius = 0.245
+	crown_shape.height = 0.49
+	crown_shape.radial_segments = 24
+	crown_shape.rings = 9
+	crown.scale = Vector3(1.0, 0.80, 1.0)
+	crown.position = Vector3(0.0, 1.80, 0.03)
+	_polish_metal_finish(crown)
+	visual.add_child(crown)
+	## 眉箍：一圈压在目镜板上方（y 1.685 处筒身面半径 0.2501）。
+	var brow := _fine_detail(_mesh("HelmBrow", TorusMesh.new(), metal.darkened(0.10)))
+	(brow.mesh as TorusMesh).inner_radius = 0.232
+	(brow.mesh as TorusMesh).outer_radius = 0.264
+	(brow.mesh as TorusMesh).rings = 24
+	(brow.mesh as TorusMesh).ring_segments = 8
+	brow.position = Vector3(0.0, 1.685, 0.03)
+	_polish_metal_finish(brow)
+	visual.add_child(brow)
+	## 目镜板（visor plate）：一块平贴在盔面上的面板，目缝与竖鼻梁都压在它上面。
+	## ⚠️ 为什么可以做成"平板"：筒身面半径 0.2538，±0.15 范围内的矢高只有 **1.4 mm**
+	##（sagitta = R − √(R²−x²)），平板贴上去四角几乎不离面。
+	var visor := _fine_detail(_mesh("VisorPlate", BoxMesh.new(), metal.lightened(0.06)))
+	(visor.mesh as BoxMesh).size = Vector3(0.30, 0.17, 0.025)
+	visor.position = Vector3(0.0, 1.585, -0.2265)
+	_polish_metal_finish(visor)
+	visual.add_child(visor)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		## 目缝：长条横缝（0.095 × 0.026），压在目镜板前表面上（板面 z = −0.239）。
+		var eye := _fine_detail(_mesh("Eye_%s" % side, BoxMesh.new(), metal.darkened(0.86)))
+		(eye.mesh as BoxMesh).size = Vector3(0.095, 0.026, 0.030)
+		eye.position = Vector3(direction * 0.062, 1.600, -0.2375)
+		visual.add_child(eye)
+	## 竖鼻梁：把两个目缝隔成左右两个眼位（同时挡住两片之间那条缝）。
+	## ⚠️ 上沿到 1.67、下沿到 **1.50** —— 不能再往下：大盔的底边在 1.46，
+	## 再长就会有一截灰色竖条挂在红色胸甲上（第一版 0.22 高、下沿 1.435，实测就是这个问题）。
+	var nasal := _fine_detail(_mesh("VisorNasal", BoxMesh.new(), metal.lightened(0.10)))
+	(nasal.mesh as BoxMesh).size = Vector3(0.038, 0.17, 0.030)
+	nasal.position = Vector3(0.0, 1.585, -0.245)
+	_polish_metal_finish(nasal)
+	visual.add_child(nasal)
+	## 护喉（bevor）：把"宽底大盔"与"窄肩躯干"之间那道空档补上。
+	## 大盔底边半径 0.26 悬在 y 1.46，而躯干在那一截只有 0.178 宽 ⇒ 侧看是一顶"飞碟"。
+	## 这段圆台顶 0.245 藏在盔里、底 0.30 压在肩上，正好把缝封住（纯表现，判定体不动）。
+	var bevor := _mesh("Bevor", CylinderMesh.new(), metal.darkened(0.20))
+	(bevor.mesh as CylinderMesh).top_radius = 0.245
+	(bevor.mesh as CylinderMesh).bottom_radius = 0.300
+	(bevor.mesh as CylinderMesh).height = 0.13
+	(bevor.mesh as CylinderMesh).radial_segments = 24
+	bevor.position = Vector3(0.0, 1.425, 0.03)
+	_polish_metal_finish(bevor)
+	visual.add_child(bevor)
+	## 盔缨座：把 `Crest`（布面盔缨）从"插在头盔上"改成"卡在金属座上"。
+	## ⚠️ y 必须抬到 **1.965**：圆顶（`HelmCrown`）的顶在 1.96，写成 1.995 就整个埋进盔里了。
+	var crest_base := _fine_detail(_mesh("CrestBase", BoxMesh.new(), metal.darkened(0.32)))
+	(crest_base.mesh as BoxMesh).size = Vector3(0.09, 0.040, 0.18)
+	crest_base.position = Vector3(0.0, 1.965, 0.03)
+	_polish_metal_finish(crest_base)
+	visual.add_child(crest_base)
+	## 盔缨改吃**队伍色**（骑士的队伍色锚点之一，与剑盾兵的护肩 / 盾面同一条口径：
+	## 头盔本身保持银色，队伍色落在缨上 ⇒ 红缨 / 银盔 / 红肩 / 红盾 / 红裙，色块一次排开）。
+	var crest := visual.get_node_or_null("Crest") as MeshInstance3D
+	if crest != null:
+		var crest_mat := crest.material_override as StandardMaterial3D
+		if crest_mat != null:
+			crest_mat.albedo_color = base
+			crest_mat.metallic = 0.0
+			crest_mat.roughness = 0.72
+			crest_mat.emission_energy_multiplier = 0.35
+		crest.name = "TeamAccent_Crest"
+		crest.set_meta("accent_tint", 0.0)
+
+## 甲片：护肩球壳（吃队伍色）+ 护肩箍 / 铆钉、胸甲 / 脊线 / 上缘、腰带 / 带扣、三片腰甲、
+## 护腕、肘护。全部按躯干半径 **0.34** 贴面（剑盾兵那一套是 0.29）。
+static func _refine_knight_armor(visual: Node3D, base: Color, metal: Color, wood: Color) -> void:
+	var dark_metal := metal.darkened(0.26)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		## 护肩：长方块 → **球壳**（与剑盾兵同一手法），吃掉队伍色、仍带金属反光。
+		var pad := visual.get_node_or_null("ShoulderPad_%s" % side) as MeshInstance3D
+		if pad != null:
+			var shell := SphereMesh.new()
+			shell.radius = 0.21
+			shell.height = 0.42
+			shell.radial_segments = 18
+			shell.rings = 9
+			pad.mesh = shell
+			pad.scale = Vector3(1.15, 0.58, 1.0)
+			pad.position = Vector3(direction * 0.35, 1.37, 0.0)
+			var pad_mat := pad.material_override as StandardMaterial3D
+			if pad_mat != null:
+				pad_mat.albedo_color = base.darkened(0.06)
+				pad_mat.metallic = 0.40
+				pad_mat.roughness = 0.42
+			## 名字换成 `TeamAccent` 前缀 ⇒ 策反（心灵腐化）换边时由
+			## `unit3d.gd#_repaint_team_accents()` 一起重绘；压暗量随件带过去。
+			pad.name = "TeamAccent_ShoulderPad_%s" % side
+			pad.set_meta("accent_tint", -0.06)
+			## 护肩箍：只从球壳**下缘**露出一圈暗钢（与剑盾兵同一手法）。
+			## ⚠️ 尺寸是照球壳在 y 1.30 处的截面（x ±0.198 / z ±0.172）定的：
+			## 第一版写 0.30 × 0.40，比壳还宽 3 cm ⇒ `knight_side.png` 里读成"肩上搁着一块托盘"。
+			## 第二版改成"第二层球壳"（lame），实测又变成护肩顶上多了一顶灰帽子（`pair_front.png`），
+			## 所以回到护肩箍，只把尺寸收进壳的截面里。
+			var trim := _fine_detail(_mesh("ShoulderTrim_%s" % side, BoxMesh.new(), dark_metal))
+			(trim.mesh as BoxMesh).size = Vector3(0.42, 0.045, 0.36)
+			trim.position = Vector3(direction * 0.35, 1.300, 0.0)
+			_polish_metal_finish(trim)
+			visual.add_child(trim)
+			## 铆钉压在**主壳的前表面**上（y 1.345 处壳面 z ≈ −0.2035 ⇒ 钉心取 −0.195，露出 2 cm）。
+			var stud := _fine_detail(_mesh("ShoulderStud_%s" % side, SphereMesh.new(),
+					metal.lightened(0.18)))
+			(stud.mesh as SphereMesh).radius = 0.030
+			(stud.mesh as SphereMesh).height = 0.060
+			stud.position = Vector3(direction * 0.35, 1.345, -0.195)
+			visual.add_child(stud)
+		## 护腕：挂在**前臂**下（不是躯干下）—— `_update_arm_pose()` 每帧重摆前臂时它跟着走，
+		## 不会像"悬在手肘旁边的独立壳"那样在挥剑时与手臂脱开。
+		var forearm := visual.get_node_or_null("Forearm_%s" % side) as MeshInstance3D
+		if forearm != null:
+			var bracer := _fine_detail(_mesh("Bracer_%s" % side, CapsuleMesh.new(), dark_metal))
+			(bracer.mesh as CapsuleMesh).radius = 0.080
+			(bracer.mesh as CapsuleMesh).height = 0.17
+			(bracer.mesh as CapsuleMesh).radial_segments = 12
+			(bracer.mesh as CapsuleMesh).rings = 4
+			_polish_metal_finish(bracer)
+			bracer.position = Vector3(0.0, 0.0, 0.0)   ## 前臂局部 +Y = 肘→手，0 就是前臂中段
+			forearm.add_child(bracer)
+		## 肘护本来是皮革色的小球：换成一整块暗钢（重甲兵不该露皮革）。
+		var couter := visual.get_node_or_null("ElbowGuard_%s" % side) as MeshInstance3D
+		if couter != null:
+			var couter_mat := couter.material_override as StandardMaterial3D
+			if couter_mat != null:
+				couter_mat.albedo_color = dark_metal
+			_polish_metal_finish(couter)
+
+	## 胸甲：前凸 1.5 cm 压在躯干上（躯干表面 z = −0.34）。厚度 0.075 ⇒ 一半埋进胶囊，
+	## 从侧面看是一条有厚度的硬边，而不是贴在身上的一张纸。
+	## ⚠️ 宽度收到 **0.46**（不是 0.50）：躯干是**胶囊**，侧面在 x ±0.25 处已经退到 z −0.23，
+	## 胸甲再宽，两块下角就会浮在肚子前面（近看是一条缝）。
+	var cuirass := _mesh("Cuirass", BoxMesh.new(), metal.darkened(0.10))
+	(cuirass.mesh as BoxMesh).size = Vector3(0.46, 0.46, 0.075)
+	cuirass.position = Vector3(0.0, 1.14, -0.318)
+	_polish_metal_finish(cuirass)
+	visual.add_child(cuirass)
+	var cuirass_ridge := _fine_detail(_mesh("CuirassRidge", BoxMesh.new(), metal.lightened(0.18)))
+	(cuirass_ridge.mesh as BoxMesh).size = Vector3(0.055, 0.36, 0.035)
+	cuirass_ridge.position = Vector3(0.0, 1.14, -0.372)
+	visual.add_child(cuirass_ridge)
+	var cuirass_trim := _fine_detail(_mesh("CuirassTrim", BoxMesh.new(), metal.lightened(0.12)))
+	(cuirass_trim.mesh as BoxMesh).size = Vector3(0.48, 0.055, 0.05)
+	cuirass_trim.position = Vector3(0.0, 1.355, -0.335)
+	visual.add_child(cuirass_trim)
+
+	## 背甲：**背面是这局里最容易露出来的一面**（受击后退 / 操控时镜头绕到背后 / 绕后包抄），
+	## 骑士原本后背就是一整块光溜溜的队伍色胶囊。补一块背板 + 一条竖脊，背面才有"重甲"的读数。
+	## 纯表现：判定体仍是胶囊 0.38 / 1.80（I-12 那一段的判据不动）。
+	var backplate := _mesh("Backplate", BoxMesh.new(), metal.darkened(0.16))
+	(backplate.mesh as BoxMesh).size = Vector3(0.40, 0.40, 0.06)
+	backplate.position = Vector3(0.0, 1.14, 0.322)
+	_polish_metal_finish(backplate)
+	visual.add_child(backplate)
+	var back_ridge := _fine_detail(_mesh("BackplateRidge", BoxMesh.new(), metal.darkened(0.02)))
+	(back_ridge.mesh as BoxMesh).size = Vector3(0.05, 0.34, 0.03)
+	back_ridge.position = Vector3(0.0, 1.14, 0.365)
+	visual.add_child(back_ridge)
+
+	## 腰带：半径 0.36 **大于**躯干 0.34 ⇒ 一圈真的箍在外面（不是嵌进肚子里的一条暗纹）。
+	var belt := _mesh("WarBelt", CylinderMesh.new(), wood.darkened(0.42))
+	(belt.mesh as CylinderMesh).top_radius = 0.36
+	(belt.mesh as CylinderMesh).bottom_radius = 0.36
+	(belt.mesh as CylinderMesh).height = 0.10
+	(belt.mesh as CylinderMesh).radial_segments = 22
+	belt.position = Vector3(0.0, 0.86, 0.0)
+	visual.add_child(belt)
+	var buckle := _fine_detail(_mesh("BeltBuckle", BoxMesh.new(), metal.lightened(0.20)))
+	(buckle.mesh as BoxMesh).size = Vector3(0.14, 0.11, 0.05)
+	buckle.position = Vector3(0.0, 0.86, -0.365)
+	visual.add_child(buckle)
+	## 三圈腰甲（lame）：**整圈箍在腰上**，不是三块悬在肚子前的方板。
+	## ⚠️ 第一版是 BoxMesh（0.54 × 0.085 × 0.055）：躯干是胶囊，方板在 x ±0.27 处
+	## 已经离身体 12 cm（`knight_side.png` 里像三块搁在身前的木板）。改成圆柱环之后
+	## 半径 0.355 / 0.365 / 0.375 一路往外张，与身体每一处只差 1.5~4 cm，绕身一圈都贴着。
+	for i in 3:
+		## 颜色比别的甲片浅一档（`dark_metal` 是 0.26 压暗）：三圈深铁箍在红腰上像"木桶箍"，
+		## 用 0.12 才是"甲裙"，和剑盾兵那一身银甲同一个色族。
+		var fauld := _mesh("Fauld_%d" % i, CylinderMesh.new(), metal.darkened(0.12))
+		var fauld_mesh: CylinderMesh = fauld.mesh
+		fauld_mesh.top_radius = 0.355 + 0.010 * float(i)
+		fauld_mesh.bottom_radius = 0.360 + 0.010 * float(i)
+		fauld_mesh.height = 0.080
+		fauld_mesh.radial_segments = 24
+		fauld.position = Vector3(0.0, 0.77 - 0.105 * float(i), 0.0)
+		_polish_metal_finish(fauld)
+		visual.add_child(fauld)
+
+## 大剑：菱形截面（复用 `_sword_blade_mesh()`，**刃口朝向由网格负责**，与剑盾兵同一口径）+
+## 两侧血槽 + 长护手 / 缠绳柄 / 剑首。整体按 1.55 倍宽、1.10 倍长放大 ⇒ 读作"大剑"而不是"长剑"。
+static func _refine_knight_weapon(weapon: Node3D, metal: Color, wood: Color) -> void:
+	## 剑抬高 `SWORD_GRIP_OFFSET`（拳心局部 +Z 抵消同一量）⇒ 拳心仍停在 y 1.05。
+	weapon.position = KNIGHT_GRIP + Vector3(0.0, SWORD_GRIP_OFFSET, 0.0)
+	var blade := weapon.get_node_or_null("Blade") as MeshInstance3D
+	if blade != null:
+		blade.mesh = _sword_blade_mesh()
+		blade.position = Vector3.ZERO
+		## 宽轴（局部 Y）1.30、薄轴（局部 X）1.20、长轴 1.12：
+		## 刃宽 0.090 → **0.117 m**、厚度 0.036 → 0.043、剑尖从 −0.95 伸到 **−1.064**。
+		## ⚠️ 第一版是 1.55 宽（0.14 m），渲染出来（`knight_hand.png`）剑面是一块**板**——
+		## 真实的大剑刃宽也就在 8~10 cm 这一档，1.30 已经是"重剑"，再宽就变成船桨了。
+		blade.scale = Vector3(1.20, 1.30, 1.12)
+		_polish_metal_finish(blade)
+		(blade.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+		## 血槽挂在**武器**下（不挂在被缩放的 `Blade` 下，免得尺寸再乘一遍缩放）。
+		## 剑面在局部 x = ±0.0216（= 0.018 × 1.20）⇒ 血槽贴在这个面上。
+		for side in ["left", "right"]:
+			var direction := -1.0 if side == "left" else 1.0
+			var fuller := _fine_detail(_mesh("BladeFuller_%s" % side, BoxMesh.new(),
+					metal.darkened(0.40)))
+			(fuller.mesh as BoxMesh).size = Vector3(0.006, 0.030, 0.74)
+			fuller.position = Vector3(direction * 0.0216, 0.0, -0.45)
+			weapon.add_child(fuller)
+	## ⚠️ 护手沿**局部 Y**（= 世界 Z）铺开，不沿 X：刃口的宽轴就是局部 Y（见 `_sword_blade_mesh()`），
+	## 真实剑的护手与刃口**共面**。写成沿 X 的话，正面（相机沿世界 X）看到的是两根短桩，
+	## 护手等于消失了 —— 剑盾兵那一版沿 X，是"刀刃还没转 90°"时的遗留。
+	var hilt := weapon.get_node_or_null("Hilt") as MeshInstance3D
+	if hilt != null:
+		(hilt.mesh as BoxMesh).size = Vector3(0.07, 0.32, 0.09)
+		hilt.position = Vector3.ZERO
+		## ⚠️ 必须连**底色**一起换：出厂那个 `Hilt` 是 `wood`（棕木），
+		## `_polish_metal_finish()` 只改 metallic / roughness / 自发光 ⇒ 只调它会得到一块"发亮的木头"。
+		(hilt.material_override as StandardMaterial3D).albedo_color = metal.darkened(0.06)
+		_polish_metal_finish(hilt)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var quillon_tip := _fine_detail(_mesh("QuillonTip_%s" % side, SphereMesh.new(),
+				metal.lightened(0.14)))
+		(quillon_tip.mesh as SphereMesh).radius = 0.032
+		(quillon_tip.mesh as SphereMesh).height = 0.064
+		quillon_tip.position = Vector3(0.0, direction * 0.168, 0.0)
+		weapon.add_child(quillon_tip)
+	## 剑柄：局部 +Z 是剑柄方向（武器沿 X 转 +90° 后指向世界 −Y = 往下），
+	## 圆柱跨 z 0.04~0.25 —— 拳心落在 0.115（`SWORD_GRIP_OFFSET`），上沿离护手 0.075。
+	## ⚠️ 不再做"缠绳三圈"：拳掌沿剑柄轴缩放 1.10 ⇒ 半宽 0.0825，从 z 0.0325 一直盖到 0.1975，
+	## 整条柄身几乎全在拳头里 —— 加了也是被手埋掉的三角形，白费顶点。
+	var grip := _mesh("SwordGrip", CylinderMesh.new(), wood.darkened(0.22))
+	(grip.mesh as CylinderMesh).top_radius = 0.038
+	(grip.mesh as CylinderMesh).bottom_radius = 0.038
+	(grip.mesh as CylinderMesh).height = 0.21
+	(grip.mesh as CylinderMesh).radial_segments = 10
+	grip.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	grip.position = Vector3(0.0, 0.0, 0.145)
+	weapon.add_child(grip)
+	## 剑首不改亮（`metal.lightened(0.10)` 在实测里是一颗**发白的球**，挂在腰线高度最抢眼）。
+	var pommel := _fine_detail(_mesh("SwordPommel", SphereMesh.new(), metal))
+	(pommel.mesh as SphereMesh).radius = 0.060
+	(pommel.mesh as SphereMesh).height = 0.120
+	pommel.position = Vector3(0.0, 0.0, 0.265)
+	weapon.add_child(pommel)
+
+## 筝形盾：盾面从"金属掺一点队伍色"改成**纯队伍色 + 提亮**（与剑盾兵的盾面同一口径），
+## 再用顶缘金属箍 / 中脊 / 两颗铆钉把"这是一块盾"立出来。格挡判定只看角度（`blocks_from()`），
+## 与这里的任何一个网格无关。
+## ⚠️ 提亮量取 **0.12** 而不是剑盾兵的 0.20：筝形盾的面积比它的方盾大 40%
+##（0.66 × 0.95 对 0.58 × 0.80），同样提亮 0.20 在实测里读成**淡粉**（`knight_front.png`），
+## 队伍色反而比躯干淡。0.12 下仍比躯干亮一档，但"红队的盾"还是红的。
+static func _refine_knight_shield(shield_pivot: Node3D, base: Color, metal: Color) -> void:
+	const FACE_TINT := 0.12
+	var face := shield_pivot.get_node_or_null("ShieldKite") as MeshInstance3D
+	if face != null:
+		var face_mat := face.material_override as StandardMaterial3D
+		if face_mat != null:
+			face_mat.albedo_color = base.lightened(FACE_TINT)
+			face_mat.metallic = 0.30
+			face_mat.roughness = 0.52
+		## 改完之后这是一块**队伍色** ⇒ 换名字前缀，策反换边时才会被重绘；
+		## 提亮量随件带过去，否则 `_ready()` 那一遍会把提亮抹平。
+		face.name = "TeamAccent_ShieldKite"
+		face.set_meta("accent_tint", FACE_TINT)
+	## 包边：直接拿**同一张筝形曲面**放大 7% 垫在盾面后面（暗钢）。
+	## 盾面前凸、包边只从轮廓外缘露出来 ⇒ 一圈顺着筝形走的金属边，三条边（顶边 + 两条斜边）一次齐活。
+	## ⚠️ 不要用方条去拼两条斜边：筝形是**曲面**，直条在中段会陷进盾面。
+	## 第一版只留了顶边一根（`ShieldRim`），`pair_front.png` 里读成"没有边框的粉色三角形"。
+	var frame := _fine_detail(_mesh("ShieldKiteFrame", _kite_face_mesh(), metal.darkened(0.14)))
+	frame.scale = Vector3(1.07, 1.05, 1.0)
+	frame.position = Vector3(0.0, 0.0, 0.035)
+	_polish_metal_finish(frame)
+	shield_pivot.add_child(frame)
+	var rim := shield_pivot.get_node_or_null("ShieldRim") as MeshInstance3D
+	if rim != null:
+		(rim.mesh as BoxMesh).size = Vector3(0.70, 0.06, 0.085)
+		rim.position = Vector3(0.0, KITE_TOP + 0.025, -0.045)
+		_polish_metal_finish(rim)
+	var spine := _fine_detail(_mesh("ShieldSpine", BoxMesh.new(), metal.lightened(0.16)))
+	(spine.mesh as BoxMesh).size = Vector3(0.055, 0.66, 0.03)
+	spine.position = Vector3(0.0, 0.02, -0.085)
+	shield_pivot.add_child(spine)
+	for x_sign in [-1.0, 1.0]:
+		var rivet := _fine_detail(_mesh("ShieldRivet_%d" % int(x_sign), SphereMesh.new(),
+				metal.lightened(0.20)))
+		(rivet.mesh as SphereMesh).radius = 0.024
+		(rivet.mesh as SphereMesh).height = 0.048
+		rivet.position = Vector3(x_sign * 0.22, 0.30, -0.060)
+		shield_pivot.add_child(rivet)
+	var boss := shield_pivot.get_node_or_null("ShieldBoss") as MeshInstance3D
+	if boss != null:
+		_polish_metal_finish(boss)
+
+## 狂战士（berserker）：**赤膊猛汉**的读数靠"毛皮 + 皮带"，不是靠甲片
+##（2026-11-03，用户："把剩下的角色都按照剑盾兵这样来更新建模和战斗动画"）。
+## 骨架 0.25 / 1.24 不动 ⇒ 每件都按 **0.25** 那条截面贴（腰带环 0.258、腰布背面埋进 2 cm）。
+## 脸上那对眼睛由 `_add_humanoid_eyes()` 在 `_build_fresh()` 里统一补，这里不重复。
+static func _refine_berserker_model(visual: Node3D, weapon: Node3D, base: Color,
+		metal: Color, wood: Color) -> void:
+	var fur := wood.darkened(0.55)          ## 毛皮 = 木色再压暗两档（深棕）
+	var leather := wood.darkened(0.30)
+	## ① 毛皮肩披：一块**偏向右肩**的毛皮（不对称才像"随手披上去的"，对称会读成护肩）。
+	var mantle := _mesh("FurMantle", SphereMesh.new(), fur)
+	(mantle.mesh as SphereMesh).radius = 0.26
+	(mantle.mesh as SphereMesh).height = 0.52
+	(mantle.mesh as SphereMesh).radial_segments = 16
+	(mantle.mesh as SphereMesh).rings = 8
+	mantle.scale = Vector3(1.0, 0.42, 0.95)
+	mantle.position = Vector3(0.18, 1.38, 0.0)
+	visual.add_child(mantle)
+	## ② 骨扣：毛皮在**左肩**的收口（一颗磨圆的骨钉，把"披"变成"扣住"）
+	var clasp := _fine_detail(_mesh("FurClasp", SphereMesh.new(), Color(0.88, 0.84, 0.74)))
+	(clasp.mesh as SphereMesh).radius = 0.034
+	(clasp.mesh as SphereMesh).height = 0.068
+	clasp.position = Vector3(-0.15, 1.33, -0.16)
+	visual.add_child(clasp)
+	## ③ 胸带：右肩 → 左腰的一条皮带（把"赤膊"和"毛皮"连起来，正面不再是光板）。
+	var strap := _fine_detail(_mesh("ChestStrap", BoxMesh.new(), leather))
+	(strap.mesh as BoxMesh).size = Vector3(0.065, 0.46, 0.03)
+	strap.position = Vector3(0.02, 1.06, -0.243)
+	strap.rotation = Vector3(0.0, 0.0, 0.52)
+	visual.add_child(strap)
+	## ④ 腰带 + 铁扣（半径 0.258 = 躯干 0.25 + 8 mm ⇒ 真的箍在腰上）
+	var belt := _mesh("WarBelt", CylinderMesh.new(), wood.darkened(0.42))
+	(belt.mesh as CylinderMesh).top_radius = 0.258
+	(belt.mesh as CylinderMesh).bottom_radius = 0.258
+	(belt.mesh as CylinderMesh).height = 0.11
+	(belt.mesh as CylinderMesh).radial_segments = 20
+	belt.position = Vector3(0.0, 0.72, 0.0)
+	visual.add_child(belt)
+	## 铁扣比腰带只宽 1 cm、位置略高于腰布上沿（0.71）—— 否则会读成"腰布上缝了一个灰口袋"。
+	var buckle := _fine_detail(_mesh("BeltBuckle", BoxMesh.new(), metal.darkened(0.10)))
+	(buckle.mesh as BoxMesh).size = Vector3(0.10, 0.08, 0.030)
+	buckle.position = Vector3(0.0, 0.725, -0.272)
+	_polish_metal_finish(buckle)
+	visual.add_child(buckle)
+	## ⑤ 腰布（**队伍色锚点**）：前腰一片垂到膝上的布 —— 策反换边时跟着换色。
+	## 按 `TeamAccent` 口径带 `accent_tint`（这里压暗 0.12：腰布本来就该比躯干暗一档）。
+	var loin := _mesh("TeamAccent_LoinCloth", BoxMesh.new(), base.darkened(0.12))
+	(loin.mesh as BoxMesh).size = Vector3(0.30, 0.36, 0.045)
+	loin.position = Vector3(0.0, 0.53, -0.245)
+	loin.set_meta("accent_tint", -0.12)
+	visual.add_child(loin)
+	## ⑥ 护腕：挂到前臂下（通用助手），皮革色、比前臂粗 1 cm
+	_add_forearm_bracers(visual, leather, 0.068, 0.16)
+	## ⑦ 斧柄握把：两只手里那一段缠皮（斧柄 r 0.042 ⇒ 缠皮 0.048 套在外面）
+	for side in ["left", "right"]:
+		var bx := -0.34 if side == "left" else 0.34
+		var wrap := _fine_detail(_mesh("HaftWrap_%s" % side, CylinderMesh.new(),
+				wood.darkened(0.50)))
+		(wrap.mesh as CylinderMesh).top_radius = 0.048
+		(wrap.mesh as CylinderMesh).bottom_radius = 0.048
+		(wrap.mesh as CylinderMesh).height = 0.10
+		(wrap.mesh as CylinderMesh).radial_segments = 8
+		wrap.position = Vector3(bx, -0.03, 0.0)
+		weapon.add_child(wrap)
+
+## 人形兵种的握持手：以后调整任何持械模型都必须保留 `Hand_left` / `Hand_right`。
+## `axis_z` = 武器握把沿本体 Z 轴（长矛）；否则按竖直握把（弓）布置拇指与腕箍。
+static func _make_grip_hand(node_name: String, skin: Color, leather: Color,
+		axis_z: bool) -> Node3D:
+	var hand := Node3D.new()
+	hand.name = node_name
+	var palm := _mesh("Palm", SphereMesh.new(), skin)
+	var palm_mesh := palm.mesh as SphereMesh
+	palm_mesh.radius = 0.075
+	palm_mesh.height = 0.15
+	palm_mesh.radial_segments = 12
+	palm_mesh.rings = 6
+	palm.scale = Vector3(1.0, 0.92, 1.18) if axis_z else Vector3(1.0, 0.92, 1.10)
+	hand.add_child(palm)
+	var thumb := _mesh("Thumb", CapsuleMesh.new(), skin)
+	var thumb_mesh := thumb.mesh as CapsuleMesh
+	thumb_mesh.radius = 0.024
+	thumb_mesh.height = 0.085
+	thumb_mesh.radial_segments = 8
+	if axis_z:
+		thumb.position = Vector3(-0.058, 0.030, 0.0)
+		thumb.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	else:
+		thumb.position = Vector3(-0.060, 0.010, -0.012)
+		thumb.rotation = Vector3(0.0, 0.0, 0.35)
+	hand.add_child(thumb)
+	var cuff := _mesh("WristCuff", CylinderMesh.new(), leather)
+	var cuff_mesh := cuff.mesh as CylinderMesh
+	cuff_mesh.top_radius = 0.060
+	cuff_mesh.bottom_radius = 0.060
+	cuff_mesh.height = 0.065
+	cuff_mesh.radial_segments = 10
+	if axis_z:
+		cuff.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+		cuff.position = Vector3(0.0, 0.0, 0.085)
+	else:
+		cuff.position = Vector3(0.0, -0.080, 0.0)
+	hand.add_child(cuff)
+	return hand
+
+## 对外的手脚姿势入口（`Unit3D._update_arm_pose()` 每帧调）：把一根肢体重新摆到 `from → to` 之间。
+## 内部就是 `_place_limb()`，单独包一层是为了让"运行时摆姿势"这件事有一个**有名字**的入口。
+static func pose_limb(part: MeshInstance3D, from: Vector3, to: Vector3, radius: float) -> void:
+	_place_limb(part, from, to, radius)
+
+## 把胶囊肢体摆到两点之间。局部 +Y 对齐 `from → to` 的方向，长度覆盖两端。
+static func _place_limb(part: MeshInstance3D, from: Vector3, to: Vector3, radius: float) -> void:
+	var offset := to - from
+	var direction := offset.normalized()
+	var limb_mesh := part.mesh as CapsuleMesh
+	limb_mesh.radius = radius
+	limb_mesh.height = maxf(offset.length(), radius * 2.0 + 0.01)
+	limb_mesh.radial_segments = 10
+	limb_mesh.rings = 4
+	part.transform = Transform3D(Basis(Quaternion(Vector3.UP, direction)), (from + to) * 0.5)
+
+## 两段式手臂：上臂（衣袖）+ 前臂（皮肤）+ 肘护。以后所有人形持械模型都必须保留。
+static func _make_arm(visual: Node3D, side: String, shoulder: Vector3, elbow: Vector3,
+		hand: Vector3, sleeve: Color, skin: Color, leather: Color) -> void:
+	var upper := _mesh("UpperArm_%s" % side, CapsuleMesh.new(), sleeve)
+	_place_limb(upper, shoulder, elbow, 0.072)
+	visual.add_child(upper)
+	var forearm := _mesh("Forearm_%s" % side, CapsuleMesh.new(), skin)
+	_place_limb(forearm, elbow, hand, 0.056)
+	## 肘部锚点写进节点 meta：`Unit3D._update_arm_pose()` 每帧读它，把前臂重新摆到「肘 → 当前手」之间
+	##（手会跟着武器动，见 `GameConfig.UNIT_ARM_FOLLOW`）。不做动画的单位也留着，读一次就够。
+	forearm.set_meta("arm_elbow", elbow)
+	forearm.set_meta("arm_hand", "Hand_%s" % side)
+	visual.add_child(forearm)
+	var guard := _mesh("ElbowGuard_%s" % side, SphereMesh.new(), leather)
+	(guard.mesh as SphereMesh).radius = 0.062
+	(guard.mesh as SphereMesh).height = 0.124
+	(guard.mesh as SphereMesh).radial_segments = 10
+	(guard.mesh as SphereMesh).rings = 5
+	guard.position = elbow
+	visual.add_child(guard)
+
+## 剑盾兵：右手握剑、左手从盾后握住盾枢轴。
+static func _make_sword_arms(visual: Node3D, base: Color, skin: Color, wood: Color,
+		weapon: Node3D = null, shield_pivot: Node3D = null) -> void:
+	var leather := wood.darkened(0.36)
+	## ⚠️ **2026-11-03**：握点跟着剑一起挪到 (0.42, 1.05, −0.26)（见 `_refine_sword_weapon()` 里"让开护肩"那一段），
+	## 肩 / 肘同步折成一条不别扭的斜线：肘 z −0.02 → **−0.10**、y 1.20 → 1.22（前臂 ≈0.23 m，与原来同一档）。
+	## ⚠️ 肘**别往前伸**：拳头落在剑柄上以后，护手（`Hilt` + 两根 `Quillon_*`）就在拳头上方一格
+	##（世界 y ≈1.165），前臂正是从那个高度斜下来握拳的 ⇒ 肘越往前，前臂越贴着护手那一格、会啃进去。
+	## 肘留在 z −0.10 时，护手 / 横杆离前臂表面还有 ≈2 cm。
+	_make_arm(visual, "right", Vector3(0.29, 1.37, -0.01), Vector3(0.42, 1.22, -0.10),
+			Vector3(0.42, 1.05, -0.26), base, skin, leather)
+	_make_arm(visual, "left", Vector3(-0.29, 1.37, -0.01), Vector3(-0.44, 1.19, -0.14),
+			Vector3(-0.34, 0.96, -0.38), base, skin, leather)
+	## ⚠️ **2026-11-02**：握剑的手挂到**剑**下、握盾的手挂到**盾枢轴**下 —— 剑劈、盾让位时手都跟着走，
+	## 手臂（前臂）由 `Unit3D._update_arm_pose()` 每帧重新摆到「肘 → 手」之间。
+	var sword_hand := _make_grip_hand("Hand_right", skin, leather, false)
+	if weapon != null:
+		## 2026-11-03（用户："手要握着剑柄而不是连接处"）：拳心落在**剑柄**上，而不是护手那一格。
+		## 局部 +Z 是剑柄方向 ⇒ 只往 +Z 挪 `SWORD_GRIP_OFFSET`，与剑抬高的量是同一个数
+		##（`_refine_sword_weapon()` 读它；这样拳心的世界高度仍是 1.05）。
+		sword_hand.position = Vector3(0.0, 0.0, SWORD_GRIP_OFFSET)
+		weapon.add_child(sword_hand)
+		## ⚠️ **2026-11-03**（用户："手前面怎么多了一个棕色的圆柱，把它放回到剑柄和剑刃的交界处"）：
+		## `_make_grip_hand(axis_z = false)` 把腕箍（`WristCuff`，深棕小圆柱）摆在**手掌局部 −Y**；
+		## 剑这个握法里 −Y 是**世界的 −Z = 正前方** ⇒ 它成了悬在拳头前 8 cm 的一圈，看着像多出来的一块。
+		## 现在按用户口径挪**回剑柄与剑刃的交界处**（= 武器局部原点 = 护手那一格）：
+		## 拳心在武器局部 **+Z `SWORD_GRIP_OFFSET`** ⇒ 箍写 **−`SWORD_GRIP_OFFSET`** 就正好落回原点。
+		## ⚠️ 它仍挂在**手**下（跟着剑一起挥），只是偏移量把位置抵消回交界处 —— 属性上没有第二个出处。
+		var wrist_cuff := sword_hand.get_node_or_null("WristCuff") as Node3D
+		if wrist_cuff != null:
+			wrist_cuff.position = Vector3(0.0, 0.0, -SWORD_GRIP_OFFSET)
+	else:
+		sword_hand.position = Vector3(0.42, 1.05, -0.26)
+		visual.add_child(sword_hand)
+	var shield_hand := _make_grip_hand("Hand_left", skin, leather, false)
+	if shield_pivot != null:
+		shield_hand.position = Vector3(0.0, 0.01, 0.08)
+		shield_pivot.add_child(shield_hand)
+	else:
+		shield_hand.position = Vector3(-0.34, 0.96, -0.38)
+		visual.add_child(shield_hand)
+
+## 人形兵种的"手臂套装"（2026-11-02，用户："把剩下的兵种的建模都参考剑盾兵的建模改进一下"）。
+## 就是 `_make_sword_arms()` 的数据版：每个兵种只报三段坐标，剩下的上臂 / 前臂 / 肘护 / 握持手全由它建。
+##
+## `arms` 每项 = `[side, shoulder, elbow, hand]`（`side` = "left" / "right"），坐标 = **humanoid 局部**。
+## ⚠️ **hand 必须落在武器握把上**（握把在哪由各兵种自己的 `weapon.position` 决定），
+## 并且**离躯干轴线的水平距离要大于该高度处的躯干截面半径** —— 这就是"手不穿模"的唯一判据
+##（截面半径 = `CapsuleMesh.radius`，进了两端半球再按 `sqrt(r² − dy²)` 收小；判据与 2026-11-02 那轮实测一致）。
+## ⚠️ 骑乘兵种传 `Rider` 当父节点（`humanoid`），不要传 `visual`，否则手臂会留在马肚子下面。
+static func _add_arms(humanoid: Node3D, arms: Array, sleeve: Color, skin: Color,
+		leather: Color, weapon: Node3D = null) -> void:
+	for entry in arms:
+		var side := String(entry[0])
+		var shoulder: Vector3 = entry[1]
+		var elbow: Vector3 = entry[2]
+		var hand_point: Vector3 = entry[3]
+		_make_arm(humanoid, side, shoulder, elbow, hand_point, sleeve, skin, leather)
+		var hand := _make_grip_hand("Hand_%s" % side, skin, leather, false)
+		## ⚠️ 手要挂到**武器**下（不是人形下）：武器一挥，手就跟着走 —— 这是"动作和建模对得上"的关键。
+		## 握持点按武器局部坐标存，武器带旋转（比如剑的 +90°）也算对。
+		## ⚠️ 第 5 项写 `false` = **空手**（不握武器，比如扇子兵的左手 / 武士大师的左手）⇒ 留在人形下不动。
+		var grips: bool = true
+		if entry.size() >= 5:
+			grips = bool(entry[4])
+		if weapon != null and grips:
+			hand.position = weapon.transform.affine_inverse() * hand_point
+			weapon.add_child(hand)
+		else:
+			hand.position = hand_point
+			humanoid.add_child(hand)
+
+## 长矛兵：瘦长骨架不动，靠轻甲、护颊、矛头与握把细节提升精度。
+## 所有新件都避开 `Spear` / `Tip` / `CrescentShield` 这些既有动画挂点。
+static func _refine_spear_model(visual: Node3D, weapon: Node3D, base: Color,
+		metal: Color, wood: Color, cloth: Color, skin: Color) -> void:
+	var dark_metal := metal.darkened(0.22)
+	var helmet := visual.get_node_or_null("Helmet") as MeshInstance3D
+	if helmet != null:
+		helmet.visible = false
+	var helm_shell := _mesh("SpearHelmShell", _open_helm_mesh(), metal)
+	(helm_shell.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+	_polish_metal_finish(helm_shell)
+	helm_shell.position = Vector3(0.0, 0.0, 0.02)
+	visual.add_child(helm_shell)
+	var brim := _fine_detail(_mesh("SpearHelmBrim", TorusMesh.new(), dark_metal))
+	(brim.mesh as TorusMesh).inner_radius = 0.258
+	(brim.mesh as TorusMesh).outer_radius = 0.307
+	(brim.mesh as TorusMesh).rings = 20
+	(brim.mesh as TorusMesh).ring_segments = 8
+	brim.position = Vector3(0.0, 1.47, 0.02)
+	_polish_metal_finish(brim)
+	visual.add_child(brim)
+	## ⚠️ 眉箍从**方条**改成**圆环**（2026-11-03）：方条 0.22 宽横在露脸缺口里（缺口 ±45°），
+	## 渲染出来是一条"白色带子勒在额头上"（`face_spear.png`）。缺口的上沿在 y 1.72
+	##（`_open_helm_mesh()` 里 1.72 → 1.84 那一段不再开口），所以把它抬到 1.725 做成
+	## 一圈箍在锥面上的环：既收住缺口的边，又不进脸。
+	var brow := _fine_detail(_mesh("SpearHelmBrow", TorusMesh.new(), metal.lightened(0.10)))
+	(brow.mesh as TorusMesh).inner_radius = 0.168
+	(brow.mesh as TorusMesh).outer_radius = 0.196
+	(brow.mesh as TorusMesh).rings = 20
+	(brow.mesh as TorusMesh).ring_segments = 6
+	brow.position = Vector3(0.0, 1.725, 0.0)
+	visual.add_child(brow)
+	## 五官（2026-11-03，与剑盾兵同一条口径）：锥盔正面是**开口露脸**的（`_open_helm_mesh()` 的 ±45°），
+	## 但出厂这张脸上只有一颗队伍色方块鼻尖 ⇒ 远看是一块红色凸起。
+	## 补一对眼睛、把鼻尖缩成小肉球（并改成肤色：脸的识别交给眼睛，鼻子不再当"朝向标记"）。
+	## 头心 (0, 1.62, 0)、半径 0.195：眼位 y 1.655 处截面 0.1917，x ±0.055 处面在 z −0.1837。
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var eye := _fine_detail(_mesh("Eye_%s" % side, SphereMesh.new(), metal.darkened(0.82)))
+		(eye.mesh as SphereMesh).radius = 0.024
+		(eye.mesh as SphereMesh).height = 0.048
+		(eye.mesh as SphereMesh).radial_segments = 10
+		(eye.mesh as SphereMesh).rings = 6
+		eye.scale = Vector3(1.0, 1.15, 0.55)
+		eye.position = Vector3(direction * 0.055, 1.655, -0.180)
+		visual.add_child(eye)
+	var nose := visual.get_node_or_null("Nose") as MeshInstance3D
+	if nose != null:
+		var nose_shape := SphereMesh.new()
+		nose_shape.radius = 0.030
+		nose_shape.height = 0.060
+		nose_shape.radial_segments = 10
+		nose_shape.rings = 6
+		nose.mesh = nose_shape
+		nose.scale = Vector3(0.85, 1.0, 1.15)
+		nose.position = Vector3(0.0, 1.645, -0.182)
+		## 底色由 `_build_fresh()` 统一给成 `skin`（2026-11-03 全局口径），这里只管形状。
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var cheek := _fine_detail(_mesh("SpearCheek_%s" % side, BoxMesh.new(), dark_metal))
+		(cheek.mesh as BoxMesh).size = Vector3(0.055, 0.20, 0.16)
+		cheek.position = Vector3(direction * 0.185, 1.48, -0.01)
+		cheek.rotation = Vector3(0.0, 0.0, -direction * 0.10)
+		visual.add_child(cheek)
+	var neck_guard := _fine_detail(_mesh("SpearNeckGuard", BoxMesh.new(), dark_metal))
+	(neck_guard.mesh as BoxMesh).size = Vector3(0.30, 0.06, 0.18)
+	neck_guard.position = Vector3(0.0, 1.43, 0.09)
+	visual.add_child(neck_guard)
+	var finial := _fine_detail(_mesh("SpearFinial", SphereMesh.new(), metal.lightened(0.16)))
+	(finial.mesh as SphereMesh).radius = 0.035
+	(finial.mesh as SphereMesh).height = 0.07
+	finial.position = Vector3(0.0, 1.955, 0.02)
+	visual.add_child(finial)
+
+	var gorget := _fine_detail(_mesh("SpearGorget", TorusMesh.new(), dark_metal))
+	(gorget.mesh as TorusMesh).inner_radius = 0.13
+	(gorget.mesh as TorusMesh).outer_radius = 0.19
+	(gorget.mesh as TorusMesh).rings = 18
+	(gorget.mesh as TorusMesh).ring_segments = 8
+	gorget.position = Vector3(0.0, 1.42, 0.0)
+	_polish_metal_finish(gorget)
+	visual.add_child(gorget)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var pauldron := _mesh("SpearPauldron_%s" % side, SphereMesh.new(), dark_metal)
+		(pauldron.mesh as SphereMesh).radius = 0.145
+		(pauldron.mesh as SphereMesh).height = 0.29
+		(pauldron.mesh as SphereMesh).radial_segments = 14
+		(pauldron.mesh as SphereMesh).rings = 7
+		pauldron.scale = Vector3(1.0, 0.55, 1.0)
+		pauldron.position = Vector3(direction * 0.27, 1.30, 0.0)
+		_polish_metal_finish(pauldron)
+		visual.add_child(pauldron)
+		## ⚠️ 队伍色件一律加 `TeamAccent` 前缀 + `accent_tint` meta（2026-11-03）：
+		## 策反（心灵腐化）换边时 `unit3d.gd#_repaint_team_accents()` 只认这个名字前缀，
+		## 不加的话这些件会**一直戴着旧队的颜色**（躯干由闪白那一路改，它们不跟着走）。
+		var pauldron_trim := _fine_detail(_mesh("TeamAccent_PauldronTrim_%s" % side,
+				BoxMesh.new(), base))
+		(pauldron_trim.mesh as BoxMesh).size = Vector3(0.20, 0.035, 0.24)
+		pauldron_trim.position = Vector3(direction * 0.27, 1.24, 0.0)
+		pauldron_trim.set_meta("accent_tint", 0.0)
+		visual.add_child(pauldron_trim)
+	var cuirass := _mesh("SpearCuirass", BoxMesh.new(), dark_metal)
+	(cuirass.mesh as BoxMesh).size = Vector3(0.34, 0.36, 0.055)
+	cuirass.position = Vector3(0.0, 1.06, -0.24)
+	_polish_metal_finish(cuirass)
+	visual.add_child(cuirass)
+	var chest_trim := _fine_detail(_mesh("TeamAccent_ChestTrim", BoxMesh.new(), base))
+	(chest_trim.mesh as BoxMesh).size = Vector3(0.35, 0.035, 0.028)
+	## ⚠️ **2026-11-02**（身材收窄的连带账，用户："外面盔甲之类的要贴合身体"）：躯干 0.26 → 0.22，
+	## 贴面件的前后位置跟着往里挪 0.038（−0.26 → −0.222）：前表面 z = −0.22，盒子半厚 0.014 ⇒ 背面嵌进去 6 mm。
+	chest_trim.position = Vector3(0.0, 1.22, -0.222)
+	chest_trim.set_meta("accent_tint", 0.0)
+	visual.add_child(chest_trim)
+	var chest_ridge := _fine_detail(_mesh("SpearChestRidge", BoxMesh.new(), metal.lightened(0.10)))
+	(chest_ridge.mesh as BoxMesh).size = Vector3(0.03, 0.28, 0.02)
+	chest_ridge.position = Vector3(0.0, 1.06, -0.230)
+	visual.add_child(chest_ridge)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var strap := _fine_detail(_mesh("SpearChestStrap_%s" % side,
+				BoxMesh.new(), wood.darkened(0.34)))
+		(strap.mesh as BoxMesh).size = Vector3(0.045, 0.32, 0.018)
+		strap.position = Vector3(direction * 0.09, 1.05, -0.232)
+		strap.rotation = Vector3(0.0, 0.0, direction * 0.34)
+		visual.add_child(strap)
+	var belt := _mesh("SpearBelt", CylinderMesh.new(), wood.darkened(0.34))
+	## ⚠️ **2026-11-02**（身材调整的连带账）：躯干半径 0.26 → **0.22**，腰带跟着从 0.27 收到 **0.228**
+	## （只比躯干表面多 8 mm ⇒ 还是"勒在腰上"，不会变成悬空的圈）。腰带扣同步从 z −0.273 收到 −0.233。
+	(belt.mesh as CylinderMesh).top_radius = 0.228
+	(belt.mesh as CylinderMesh).bottom_radius = 0.228
+	(belt.mesh as CylinderMesh).height = 0.065
+	(belt.mesh as CylinderMesh).radial_segments = 18
+	belt.position = Vector3(0.0, 0.69, 0.0)
+	visual.add_child(belt)
+	var buckle := _fine_detail(_mesh("SpearBeltBuckle", BoxMesh.new(), metal.lightened(0.16)))
+	(buckle.mesh as BoxMesh).size = Vector3(0.08, 0.06, 0.03)
+	buckle.position = Vector3(0.0, 0.69, -0.233)
+	visual.add_child(buckle)
+	for i in 3:
+		## 只有中间那一片是队伍色 ⇒ 只有它需要 `TeamAccent` 前缀（左右两片是布料）。
+		var tasset_name := "TeamAccent_Tasset" if i == 1 else "SpearTasset_%d" % i
+		var tasset := _mesh(tasset_name, BoxMesh.new(), base if i == 1 else cloth)
+		(tasset.mesh as BoxMesh).size = Vector3(0.11, 0.22, 0.04)
+		tasset.position = Vector3((float(i) - 1.0) * 0.11, 0.53, -0.20)
+		_polish_metal_finish(tasset)
+		if i == 1:
+			tasset.set_meta("accent_tint", 0.0)
+		visual.add_child(tasset)
+
+	var tip := weapon.get_node_or_null("Tip") as MeshInstance3D
+	if tip != null:
+		tip.mesh = _spearhead_mesh()
+		tip.position = Vector3(0.0, 0.0, -2.74)
+		tip.rotation = Vector3.ZERO
+		_polish_metal_finish(tip)
+		(tip.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+	var socket := _fine_detail(_mesh("SpearSocket", CylinderMesh.new(), dark_metal))
+	(socket.mesh as CylinderMesh).top_radius = 0.052
+	(socket.mesh as CylinderMesh).bottom_radius = 0.058
+	(socket.mesh as CylinderMesh).height = 0.14
+	(socket.mesh as CylinderMesh).radial_segments = 12
+	socket.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	socket.position = Vector3(0.0, 0.0, -2.70)
+	_polish_metal_finish(socket)
+	weapon.add_child(socket)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var langet := _fine_detail(_mesh("SpearLanget_%s" % side,
+				BoxMesh.new(), metal.darkened(0.12)))
+		(langet.mesh as BoxMesh).size = Vector3(0.018, 0.055, 0.32)
+		langet.position = Vector3(direction * 0.052, 0.0, -2.54)
+		weapon.add_child(langet)
+	for i in 3:
+		var wrap := _fine_detail(_mesh("SpearGripWrap_%d" % i,
+				CylinderMesh.new(), wood.darkened(0.42)))
+		(wrap.mesh as CylinderMesh).top_radius = 0.052
+		(wrap.mesh as CylinderMesh).bottom_radius = 0.052
+		(wrap.mesh as CylinderMesh).height = 0.042
+		(wrap.mesh as CylinderMesh).radial_segments = 12
+		wrap.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+		wrap.position = Vector3(0.0, 0.0, 0.06 - 0.14 * float(i))
+		weapon.add_child(wrap)
+	var butt := _fine_detail(_mesh("SpearButtCap", SphereMesh.new(), dark_metal))
+	(butt.mesh as SphereMesh).radius = 0.052
+	(butt.mesh as SphereMesh).height = 0.104
+	butt.position = Vector3(0.0, 0.0, 0.205)
+	_polish_metal_finish(butt)
+	weapon.add_child(butt)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var tassel := _fine_detail(_mesh("TeamAccent_Tassel_%s" % side,
+				BoxMesh.new(), base))
+		(tassel.mesh as BoxMesh).size = Vector3(0.042, 0.26, 0.016)
+		tassel.position = Vector3(direction * 0.035, -0.17, -2.53)
+		tassel.rotation = Vector3(0.0, 0.0, direction * 0.10)
+		tassel.set_meta("accent_tint", 0.0)
+		weapon.add_child(tassel)
+	var grip_leather := wood.darkened(0.42)
+	var rear_hand := _make_grip_hand("Hand_right", skin, grip_leather, true)
+	rear_hand.position = Vector3(0.0, 0.0, 0.045)
+	weapon.add_child(rear_hand)
+	var front_hand := _make_grip_hand("Hand_left", skin, grip_leather, true)
+	## ⚠️ **2026-11-02**：前面那只手由 −0.180 挪到 **−0.480**（世界 z = −0.38）。
+	## 原来它在 z = −0.08、几乎贴着身体中段，左前臂从肩头横穿过去时**整段埋在躯干里**（用户："没拿武器的手穿模"）。
+	## 往前挪这一截之后，左手落在"身前握杆"的位置上，前臂自然从胸前绕过去。
+	front_hand.position = Vector3(0.0, 0.0, -0.480)
+	weapon.add_child(front_hand)
+	_make_arm(visual, "right", Vector3(0.24, 1.36, 0.0), Vector3(0.40, 1.18, 0.04),
+			Vector3(0.28, 1.05, 0.145), base, skin, grip_leather)
+	## 左臂（空手那一侧）：肘部**压到身前**（z −0.30 → −0.34）、落点改成新的握手位置。
+	## 判据：上臂 / 前臂的中点到躯干轴线的水平距离必须**大于躯干半径**（长矛兵 0.22），否则就是穿模。
+	_make_arm(visual, "left", Vector3(-0.25, 1.36, 0.0), Vector3(-0.10, 1.15, -0.34),
+			Vector3(0.28, 1.05, -0.38), base, skin, grip_leather)
+	## 护腕：挂在**前臂**下（与骑士同一手法）⇒ `_update_arm_pose()` 每帧重摆前臂时它跟着走，
+	## 不会像"独立摆在前臂附近的壳"那样在突刺时与手臂脱开。
+	## 长矛兵是轻甲，用**皮革**护腕，不是骑士那种钢护腕。
+	for side in ["left", "right"]:
+		var forearm := visual.get_node_or_null("Forearm_%s" % side) as MeshInstance3D
+		if forearm == null:
+			continue
+		var bracer := _fine_detail(_mesh("Bracer_%s" % side, CapsuleMesh.new(),
+				grip_leather.darkened(0.14)))
+		(bracer.mesh as CapsuleMesh).radius = 0.062
+		(bracer.mesh as CapsuleMesh).height = 0.15
+		(bracer.mesh as CapsuleMesh).radial_segments = 10
+		(bracer.mesh as CapsuleMesh).rings = 3
+		bracer.position = Vector3.ZERO
+		forearm.add_child(bracer)
+
+## 正面开口的锥盔壳体：顶部与后侧完整包住头，正面留出 ±45° 的露脸缺口。
+## 单面壳体 + 关背面剔除；法线一律朝外，避免内外表面互相压暗。
+static func _open_helm_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var levels := [
+		[1.47, 0.300, true],
+		[1.60, 0.235, true],
+		[1.72, 0.190, true],
+		[1.84, 0.110, false],
+		[1.94, 0.020, false],
+	]
+	var cols := 28
+	var open_half := 0.78
+	for row in levels.size() - 1:
+		var y0 := float(levels[row][0])
+		var r0 := float(levels[row][1])
+		var open0 := bool(levels[row][2])
+		var y1 := float(levels[row + 1][0])
+		var r1 := float(levels[row + 1][1])
+		var open1 := bool(levels[row + 1][2])
+		for col in cols:
+			var phi0 := -PI + TAU * float(col) / float(cols)
+			var phi1 := -PI + TAU * float(col + 1) / float(cols)
+			var mid := (phi0 + phi1) * 0.5
+			if (open0 or open1) and absf(mid) < open_half:
+				continue
+			var p00 := Vector3(sin(phi0) * r0, y0, -cos(phi0) * r0)
+			var p01 := Vector3(sin(phi1) * r0, y0, -cos(phi1) * r0)
+			var p10 := Vector3(sin(phi0) * r1, y1, -cos(phi0) * r1)
+			var p11 := Vector3(sin(phi1) * r1, y1, -cos(phi1) * r1)
+			var n0 := Vector3(sin(phi0), 0.34, -cos(phi0)).normalized()
+			var n1 := Vector3(sin(phi1), 0.34, -cos(phi1)).normalized()
+			st.set_normal(n0)
+			st.add_vertex(p00)
+			st.add_vertex(p01)
+			st.set_normal(n1)
+			st.add_vertex(p11)
+			st.set_normal(n0)
+			st.add_vertex(p00)
+			st.add_vertex(p11)
+			st.set_normal(n1)
+			st.add_vertex(p10)
+	return st.commit()
+
+## 柳叶形矛头：基部窄、中段最宽、前端收尖，菱形截面。
+static func _spearhead_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings := [
+		[Vector3(-0.042, 0.0, 0.0), Vector3(0.0, 0.016, 0.0),
+				Vector3(0.042, 0.0, 0.0), Vector3(0.0, -0.016, 0.0)],
+		[Vector3(-0.085, 0.0, -0.18), Vector3(0.0, 0.026, -0.18),
+				Vector3(0.085, 0.0, -0.18), Vector3(0.0, -0.026, -0.18)],
+	]
+	for side in 4:
+		var next := (side + 1) % 4
+		var edge: Vector3 = rings[0][next] - rings[0][side]
+		var normal := Vector3(-edge.y, edge.x, 0.0).normalized()
+		st.set_normal(normal)
+		st.add_vertex(rings[0][side])
+		st.add_vertex(rings[0][next])
+		st.add_vertex(rings[1][next])
+		st.add_vertex(rings[0][side])
+		st.add_vertex(rings[1][next])
+		st.add_vertex(rings[1][side])
+		st.add_vertex(rings[1][side])
+		st.add_vertex(rings[1][next])
+		st.add_vertex(Vector3(0.0, 0.0, -0.38))
+	st.set_normal(Vector3(0.0, 0.0, 1.0))
+	for side in 4:
+		st.add_vertex(rings[0][side])
+		st.add_vertex(Vector3.ZERO)
+		st.add_vertex(rings[0][(side + 1) % 4])
+	return st.commit()
+
+## 短弓手：兜帽、面巾、胸带、箭袋与弓梢都做细，但不加金属重甲，保持轻装轮廓。
+static func _refine_shortbow_model(visual: Node3D, weapon: Node3D, base: Color,
+		metal: Color, wood: Color, cloth: Color, skin: Color) -> void:
+	var dark_cloth := cloth.darkened(0.24)
+	var hood := visual.get_node_or_null("Hood") as MeshInstance3D
+	if hood != null:
+		hood.visible = false
+	var hood_shell := _mesh("HoodShell", _hood_shell_mesh(), cloth)
+	(hood_shell.material_override as StandardMaterial3D).cull_mode = BaseMaterial3D.CULL_DISABLED
+	hood_shell.position = Vector3(0.0, 0.0, 0.02)
+	visual.add_child(hood_shell)
+	var hood_peak := _fine_detail(_mesh("HoodPeak", CylinderMesh.new(), cloth.darkened(0.08)))
+	(hood_peak.mesh as CylinderMesh).top_radius = 0.0
+	(hood_peak.mesh as CylinderMesh).bottom_radius = 0.10
+	(hood_peak.mesh as CylinderMesh).height = 0.20
+	(hood_peak.mesh as CylinderMesh).radial_segments = 10
+	hood_peak.position = Vector3(0.0, 1.91, 0.13)
+	hood_peak.rotation = Vector3(0.16, 0.0, 0.0)
+	visual.add_child(hood_peak)
+	var hood_trim := _fine_detail(_mesh("HoodTrim", TorusMesh.new(), dark_cloth))
+	(hood_trim.mesh as TorusMesh).inner_radius = 0.170
+	(hood_trim.mesh as TorusMesh).outer_radius = 0.212
+	(hood_trim.mesh as TorusMesh).rings = 18
+	(hood_trim.mesh as TorusMesh).ring_segments = 8
+	hood_trim.position = Vector3(0.0, 1.51, 0.06)
+	visual.add_child(hood_trim)
+	var hood_fold := _fine_detail(_mesh("HoodFold", BoxMesh.new(), cloth.darkened(0.12)))
+	(hood_fold.mesh as BoxMesh).size = Vector3(0.20, 0.26, 0.05)
+	hood_fold.position = Vector3(0.0, 1.58, 0.27)
+	hood_fold.rotation = Vector3(-0.18, 0.0, 0.0)
+	visual.add_child(hood_fold)
+	## ⚠️ 蒙面布从**方盒**改成**贴脸的扁球**（2026-11-03）：原来那块 0.28 × 0.12 × 0.13 的方盒
+	## 前脸在 z −0.215、比头面（−0.20）还靠前，渲染出来是一块**四四方方的黑板**挂在嘴前面
+	##（`face_bow.png`）。改成扁球之后它顺着下颌包过去，只露一条窄窄的下缘。
+	## 尺寸判据：球心 y 1.50 ⇒ 半高 0.093 ⇒ 上沿 1.593（留给眼睛 1.635 一条 4 cm 的间隔）。
+	var face_wrap := _fine_detail(_mesh("FaceWrap", SphereMesh.new(), dark_cloth))
+	(face_wrap.mesh as SphereMesh).radius = 0.160
+	(face_wrap.mesh as SphereMesh).height = 0.32
+	(face_wrap.mesh as SphereMesh).radial_segments = 16
+	(face_wrap.mesh as SphereMesh).rings = 8
+	face_wrap.scale = Vector3(1.06, 0.58, 1.0)
+	face_wrap.position = Vector3(0.0, 1.50, -0.005)
+	visual.add_child(face_wrap)
+	## 五官（2026-11-03，与剑盾兵同一条口径）：兜帽正面开了一块窗（`_hood_shell_mesh()` 里
+	## `mid_theta > 1.15` 且 |phi| < 0.83 的四边形被跳过 ⇒ 窗口 y 1.488~1.752、±47.5°），
+	## 出厂这张脸上什么都没有，只有一颗队伍色方块鼻尖。
+	## 补一对眼睛、把鼻尖缩成小肉球并改成肤色。头心 (0, 1.62, 0)、半径 0.200：
+	## 眼位 y 1.635 处截面 0.1994、x ±0.052 处面在 z −0.1925。
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var eye := _fine_detail(_mesh("Eye_%s" % side, SphereMesh.new(), metal.darkened(0.82)))
+		(eye.mesh as SphereMesh).radius = 0.023
+		(eye.mesh as SphereMesh).height = 0.046
+		(eye.mesh as SphereMesh).radial_segments = 10
+		(eye.mesh as SphereMesh).rings = 6
+		eye.scale = Vector3(1.0, 1.15, 0.55)
+		eye.position = Vector3(direction * 0.052, 1.635, -0.189)
+		visual.add_child(eye)
+	var nose := visual.get_node_or_null("Nose") as MeshInstance3D
+	if nose != null:
+		var nose_shape := SphereMesh.new()
+		nose_shape.radius = 0.028
+		nose_shape.height = 0.056
+		nose_shape.radial_segments = 10
+		nose_shape.rings = 6
+		nose.mesh = nose_shape
+		nose.scale = Vector3(0.85, 1.0, 1.15)
+		nose.position = Vector3(0.0, 1.600, -0.190)
+		## 底色由 `_build_fresh()` 统一给成 `skin`（2026-11-03 全局口径），这里只管形状。
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var shoulder := _mesh("ShortbowShoulder_%s" % side, SphereMesh.new(), dark_cloth)
+		(shoulder.mesh as SphereMesh).radius = 0.12
+		(shoulder.mesh as SphereMesh).height = 0.24
+		(shoulder.mesh as SphereMesh).radial_segments = 12
+		(shoulder.mesh as SphereMesh).rings = 6
+		shoulder.scale = Vector3(1.0, 0.55, 1.0)
+		shoulder.position = Vector3(direction * 0.25, 1.36, 0.0)
+		visual.add_child(shoulder)
+		var strap := _fine_detail(_mesh("ShortbowStrap_%s" % side,
+				BoxMesh.new(), wood.darkened(0.26)))
+		(strap.mesh as BoxMesh).size = Vector3(0.045, 0.34, 0.018)
+		## ⚠️ **2026-11-02**（身材收窄的连带账）：躯干 0.28 → 0.235，绑带从 −0.272 收到 −0.236（背面嵌进 3 mm）。
+		strap.position = Vector3(direction * 0.08, 1.08, -0.236)
+		strap.rotation = Vector3(0.0, 0.0, direction * 0.36)
+		visual.add_child(strap)
+	## 队伍色件一律带 `TeamAccent` 前缀 + `accent_tint`（2026-11-03）：策反换边时
+	## `unit3d.gd#_repaint_team_accents()` 只认这个前缀，否则会一直戴着旧队颜色。
+	var badge := _fine_detail(_mesh("TeamAccent_Badge", BoxMesh.new(), base))
+	(badge.mesh as BoxMesh).size = Vector3(0.09, 0.09, 0.022)
+	badge.position = Vector3(0.0, 1.16, -0.248)
+	badge.rotation = Vector3(0.0, 0.0, PI * 0.25)
+	badge.set_meta("accent_tint", 0.0)
+	visual.add_child(badge)
+	var belt := _mesh("ShortbowBelt", CylinderMesh.new(), wood.darkened(0.34))
+	## ⚠️ **2026-11-02**（身材调整的连带账）：躯干半径 0.28 → **0.235**，腰带跟着从 0.285 收到 **0.243**。
+	(belt.mesh as CylinderMesh).top_radius = 0.243
+	(belt.mesh as CylinderMesh).bottom_radius = 0.243
+	(belt.mesh as CylinderMesh).height = 0.055
+	(belt.mesh as CylinderMesh).radial_segments = 18
+	belt.position = Vector3(0.0, 0.68, 0.0)
+	visual.add_child(belt)
+	## ⚠️ 护腕原本是两只**独立摆在躯干两侧**的胶囊（(±0.275, 1.02, −0.03)、轴朝 Z），
+	## 拉弦时前臂一摆就露出"悬在腰边的黑筒"。改到 `_make_arm()` 之后挂到**前臂**下（见函数末尾）。
+
+	var bow_grip := weapon.get_node_or_null("BowGrip") as MeshInstance3D
+	if bow_grip != null:
+		_polish_metal_finish(bow_grip)
+	var grip_wrap := _fine_detail(_mesh("BowGripWrap", CylinderMesh.new(), cloth.darkened(0.18)))
+	(grip_wrap.mesh as CylinderMesh).top_radius = 0.058
+	(grip_wrap.mesh as CylinderMesh).bottom_radius = 0.058
+	(grip_wrap.mesh as CylinderMesh).height = 0.16
+	(grip_wrap.mesh as CylinderMesh).radial_segments = 12
+	grip_wrap.position = Vector3(0.36, 1.05, -0.46)
+	weapon.add_child(grip_wrap)
+	for end in ["upper", "lower"]:
+		var up := 1.0 if end == "upper" else -1.0
+		var nock := _fine_detail(_mesh("BowNock_%s" % end, CylinderMesh.new(), metal.darkened(0.15)))
+		(nock.mesh as CylinderMesh).top_radius = 0.030
+		(nock.mesh as CylinderMesh).bottom_radius = 0.036
+		(nock.mesh as CylinderMesh).height = 0.09
+		(nock.mesh as CylinderMesh).radial_segments = 10
+		nock.rotation = Vector3(0.30 * up, 0.0, 0.0)
+		nock.position = Vector3(0.36, 1.05 + 0.655 * up, -0.28)
+		weapon.add_child(nock)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var ribbon := _fine_detail(_mesh("TeamAccent_BowRibbon_%s" % side,
+				BoxMesh.new(), base))
+		(ribbon.mesh as BoxMesh).size = Vector3(0.025, 0.20, 0.012)
+		ribbon.position = Vector3(0.36 + direction * 0.035, 1.53, -0.29)
+		ribbon.rotation = Vector3(0.12, 0.0, direction * 0.12)
+		ribbon.set_meta("accent_tint", 0.0)
+		weapon.add_child(ribbon)
+
+	var quiver := visual.get_node_or_null("Quiver") as MeshInstance3D
+	if quiver != null:
+		for i in 3:
+			var offset_x := (float(i) - 1.0) * 0.045
+			var offset_z := (float(i % 2) - 0.5) * 0.04
+			var arrow := _fine_detail(_mesh("QuiverArrow_%d" % i,
+					CylinderMesh.new(), wood.darkened(0.10)))
+			(arrow.mesh as CylinderMesh).top_radius = 0.008
+			(arrow.mesh as CylinderMesh).bottom_radius = 0.008
+			(arrow.mesh as CylinderMesh).height = 0.34
+			(arrow.mesh as CylinderMesh).radial_segments = 6
+			arrow.position = Vector3(offset_x, 0.36, offset_z)
+			quiver.add_child(arrow)
+			var ferrule := _fine_detail(_mesh("QuiverArrowhead_%d" % i,
+					CylinderMesh.new(), metal.lightened(0.10)))
+			(ferrule.mesh as CylinderMesh).top_radius = 0.0
+			(ferrule.mesh as CylinderMesh).bottom_radius = 0.018
+			(ferrule.mesh as CylinderMesh).height = 0.055
+			(ferrule.mesh as CylinderMesh).radial_segments = 6
+			ferrule.position = Vector3(offset_x, 0.555, offset_z)
+			quiver.add_child(ferrule)
+			var vane := _fine_detail(_mesh("TeamAccent_QuiverVane_%d" % i, BoxMesh.new(), base))
+			(vane.mesh as BoxMesh).size = Vector3(0.045, 0.075, 0.010)
+			vane.position = Vector3(offset_x, 0.49, offset_z)
+			vane.rotation = Vector3(0.0, float(i) * 0.6, 0.0)
+			vane.set_meta("accent_tint", 0.0)
+			quiver.add_child(vane)
+	var grip_leather := wood.darkened(0.42)
+	var bow_hand := _make_grip_hand("Hand_right", skin, grip_leather, false)
+	bow_hand.position = Vector3(0.36, 1.05, -0.46)
+	weapon.add_child(bow_hand)
+	var draw_hand := _make_grip_hand("Hand_left", skin, grip_leather, false)
+	draw_hand.position = Vector3(0.36, 1.05, -0.30)
+	weapon.add_child(draw_hand)
+	_make_arm(visual, "right", Vector3(0.24, 1.36, 0.0), Vector3(0.40, 1.18, -0.14),
+			Vector3(0.36, 1.05, -0.46), dark_cloth, skin, grip_leather)
+	## ⚠️ **2026-11-02**（用户："没拿武器的手穿模"）：左手要跨到身体右侧去拉弦（弦在 x = 0.36），
+	## 肘部原先只探到 z = −0.25、躯干半径 0.235 ⇒ 前臂**从胸口中间穿过去**。
+	## 把肘部压到 **z = −0.42**（整条前臂都走在身体前面），中点离轴线 0.386 m > 0.235 m ✓。
+	_make_arm(visual, "left", Vector3(-0.25, 1.36, 0.0), Vector3(-0.08, 1.17, -0.42),
+			Vector3(0.36, 1.05, -0.30), dark_cloth, skin, grip_leather)
+	## 护腕：挂到**前臂**下（2026-11-03），跟着 `_update_arm_pose()` 每帧的重摆走。
+	## 半径 0.062 略大于前臂 0.056 ⇒ 是一圈套在前臂上的皮护腕，而不是躯干边的独立黑筒。
+	for side in ["left", "right"]:
+		var forearm := visual.get_node_or_null("Forearm_%s" % side) as MeshInstance3D
+		if forearm == null:
+			continue
+		var bracer := _fine_detail(_mesh("Bracer_%s" % side, CapsuleMesh.new(), dark_cloth))
+		(bracer.mesh as CapsuleMesh).radius = 0.062
+		(bracer.mesh as CapsuleMesh).height = 0.16
+		(bracer.mesh as CapsuleMesh).radial_segments = 10
+		(bracer.mesh as CapsuleMesh).rings = 3
+		bracer.position = Vector3.ZERO
+		forearm.add_child(bracer)
+
+## 正面开口的布兜帽：椭球壳从头顶包到颈侧，正面下方留出露脸缺口。
+static func _hood_shell_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var center := Vector3(0.0, 1.66, 0.04)
+	var radii := Vector3(0.235, 0.225, 0.245)
+	var rows := 10
+	var cols := 28
+	var open_half := 0.83
+	for row in rows:
+		var theta0 := 2.45 * float(row) / float(rows)
+		var theta1 := 2.45 * float(row + 1) / float(rows)
+		for col in cols:
+			var phi0 := -PI + TAU * float(col) / float(cols)
+			var phi1 := -PI + TAU * float(col + 1) / float(cols)
+			var mid_phi := (phi0 + phi1) * 0.5
+			var mid_theta := (theta0 + theta1) * 0.5
+			if mid_theta > 1.15 and absf(mid_phi) < open_half:
+				continue
+			var p00 := _hood_point(theta0, phi0, center, radii)
+			var p01 := _hood_point(theta0, phi1, center, radii)
+			var p10 := _hood_point(theta1, phi0, center, radii)
+			var p11 := _hood_point(theta1, phi1, center, radii)
+			var n00 := _hood_normal(p00, center, radii)
+			var n01 := _hood_normal(p01, center, radii)
+			var n10 := _hood_normal(p10, center, radii)
+			var n11 := _hood_normal(p11, center, radii)
+			st.set_normal(n00)
+			st.add_vertex(p00)
+			st.set_normal(n01)
+			st.add_vertex(p01)
+			st.set_normal(n11)
+			st.add_vertex(p11)
+			st.set_normal(n00)
+			st.add_vertex(p00)
+			st.set_normal(n11)
+			st.add_vertex(p11)
+			st.set_normal(n10)
+			st.add_vertex(p10)
+	return st.commit()
+
+static func _hood_point(theta: float, phi: float, center: Vector3, radii: Vector3) -> Vector3:
+	return Vector3(
+			center.x + sin(theta) * sin(phi) * radii.x,
+			center.y + cos(theta) * radii.y,
+			center.z - sin(theta) * cos(phi) * radii.z)
+
+static func _hood_normal(point: Vector3, center: Vector3, radii: Vector3) -> Vector3:
+	var offset := point - center
+	return Vector3(offset.x / (radii.x * radii.x),
+			offset.y / (radii.y * radii.y),
+			offset.z / (radii.z * radii.z)).normalized()
+
+## 玉面手雷王：小圆身不动，补王冠、披风、肩章、腰包和第二颗炸弹，强化"炸弹国王"的剪影。
+## ⚠️ 所有新件都不叫 `Fx*`，避免被 `unit3d.gd` 的常亮件开关误藏。
+# ---------------------------------------------------------------- 价格 2 / boss 兵种的装饰精修（2026-11-03 自本地版移植）
+## 用户口径："参考 E:\GameDev\yufengdaluandou，把长弓手、扇子兵、火枪兵、武士大师、湮灭之瞳身上的装饰恢复"。
+## 这 5 个兵种在本地版有一整层精修、本项目没有 —— 本段就是那层精修的移植版：
+##   ① 只加**纯视觉件**，不改 `weapon` 挂点的 position / rotation（那是出手动画的转轴，见 `unit3d.gd#_animate_attack()`）；
+##   ② **不挂 `_fine_detail()` 的 48 m 距离裁剪**：本地版实测远机位下这层会整批消失（用户"装饰少了"的由来）；
+##   ③ 坐标按**本项目骨架**重算 —— 两边 `SILHOUETTE` 不同（长弓 0.22 / 扇 0.28 / 火枪 0.27 / 武士 0.40），
+##      不能照搬本地版的数字；金属件走既有 `_polish_metal_finish()`，发光件照本项目惯例内联调 emission。
+## ⚠️ 玩法数值一个都不在这里（不变量 I-15）。
+
+## 一圈水平环（腰带 / 绑带 / 下摆）：落点是**父节点局部坐标**，调用方决定挂 `visual` 还是 `weapon`。
+static func _band(parent: Node3D, node_name: String, radius: float, height: float,
+		y: float, color: Color, z: float = 0.0) -> MeshInstance3D:
+	var band := _mesh(node_name, CylinderMesh.new(), color)
+	var band_mesh: CylinderMesh = band.mesh
+	band_mesh.top_radius = radius
+	band_mesh.bottom_radius = radius
+	band_mesh.height = height
+	band_mesh.radial_segments = 18
+	band.position = Vector3(0.0, y, z)
+	parent.add_child(band)
+	return band
+
+## ---- 长弓手（longbow）：弓腹补段 + 弦端缠头 + 弦结 + 箭袋露箭 + 猎手装束。
+## 本项目弓的骨架与本地版逐数相同（握把 y 0.83~1.17、两根弓臂近端 y 1.223 / 0.777），
+## 中段那两道 **5 cm 空档**在这里同样存在 ⇒ 补段照搬；弦本身本项目 2026-11-02 已改
+## `_build_bow_string()`（弦端钉在梢上），不再需要本地版那步"接弦"。
+static func _refine_longbow_model(visual: Node3D, weapon: Node3D, metal: Color,
+		wood: Color, cloth: Color, base: Color) -> void:
+	var wrap := _mesh("LongbowWrap", CylinderMesh.new(), cloth.darkened(0.18))
+	(wrap.mesh as CylinderMesh).top_radius = 0.056
+	(wrap.mesh as CylinderMesh).bottom_radius = 0.056
+	(wrap.mesh as CylinderMesh).height = 0.20
+	(wrap.mesh as CylinderMesh).radial_segments = 12
+	wrap.position = Vector3(0.34, 1.00, -0.50)
+	weapon.add_child(wrap)
+	for end in ["upper", "lower"]:
+		var up := 1.0 if end == "upper" else -1.0
+		## 弓腹补段：倾角与那根弓臂一致，把"握把 ↔ 弓臂"的空档接成一根连续的弓
+		var bridge := _mesh("LongbowBridge_%s" % end, CylinderMesh.new(), wood.darkened(0.06))
+		(bridge.mesh as CylinderMesh).top_radius = 0.045
+		(bridge.mesh as CylinderMesh).bottom_radius = 0.045
+		(bridge.mesh as CylinderMesh).height = 0.16
+		(bridge.mesh as CylinderMesh).radial_segments = 8
+		bridge.rotation = Vector3(0.26 * up, 0.0, 0.0)
+		bridge.position = Vector3(0.34, 1.00 + 0.196 * up, -0.49)
+		weapon.add_child(bridge)
+		## 弦端小缠头：把"弦到底接在哪儿"画出来
+		var tip_cap := _mesh("LongbowStringEnd_%s" % end, CylinderMesh.new(), metal.darkened(0.20))
+		(tip_cap.mesh as CylinderMesh).top_radius = 0.026
+		(tip_cap.mesh as CylinderMesh).bottom_radius = 0.026
+		(tip_cap.mesh as CylinderMesh).height = 0.07
+		(tip_cap.mesh as CylinderMesh).radial_segments = 8
+		tip_cap.position = Vector3(0.34, 1.00 + 0.972 * up, -0.28)
+		weapon.add_child(tip_cap)
+	## 弦结：本项目的扣弦点在 (0.30, 1.02, -0.26)（见 `_build_bow_string` 调用），钉在这儿
+	var nock := _mesh("LongbowNock", BoxMesh.new(), metal.darkened(0.10))
+	(nock.mesh as BoxMesh).size = Vector3(0.030, 0.060, 0.030)
+	nock.position = Vector3(0.30, 1.02, -0.26)
+	_polish_metal_finish(nock)
+	weapon.add_child(nock)
+	for i in 4:
+		var shaft := _mesh("LongQuiverArrow_%d" % i, CylinderMesh.new(), wood.lightened(0.10))
+		(shaft.mesh as CylinderMesh).top_radius = 0.010
+		(shaft.mesh as CylinderMesh).bottom_radius = 0.012
+		(shaft.mesh as CylinderMesh).height = 0.52
+		(shaft.mesh as CylinderMesh).radial_segments = 6
+		shaft.rotation = Vector3(0.30, 0.0, 0.42)
+		shaft.position = Vector3(0.06 + 0.05 * float(i), 1.64, 0.34 + 0.035 * float(i))
+		visual.add_child(shaft)
+	var cloak := _mesh("LongCloak", BoxMesh.new(), cloth.darkened(0.06))
+	(cloak.mesh as BoxMesh).size = Vector3(0.42, 0.60, 0.05)
+	cloak.position = Vector3(-0.03, 1.00, 0.27)
+	cloak.rotation = Vector3(0.06, 0.0, 0.0)
+	visual.add_child(cloak)
+	## ---- 猎手装束：束腰外衣 + 队伍色滚边 + 皮带 + 垂布 + 箭袋背带 + 皮护腕 + 臂章
+	var tunic := _mesh("LongTunicHem", CylinderMesh.new(), cloth.darkened(0.12))
+	(tunic.mesh as CylinderMesh).top_radius = 0.245
+	(tunic.mesh as CylinderMesh).bottom_radius = 0.295
+	(tunic.mesh as CylinderMesh).height = 0.36
+	(tunic.mesh as CylinderMesh).radial_segments = 16
+	tunic.position = Vector3(0.0, 0.56, 0.0)
+	visual.add_child(tunic)
+	## 队伍色滚边：`TeamAccent` 前缀 ⇒ 换边时由 `unit3d.gd#_repaint_team_accents()` 重绘
+	var hem_trim := _mesh("TeamAccent_LongHem", CylinderMesh.new(), base.lightened(0.10))
+	(hem_trim.mesh as CylinderMesh).top_radius = 0.297
+	(hem_trim.mesh as CylinderMesh).bottom_radius = 0.297
+	(hem_trim.mesh as CylinderMesh).height = 0.055
+	(hem_trim.mesh as CylinderMesh).radial_segments = 16
+	hem_trim.position = Vector3(0.0, 0.40, 0.0)
+	visual.add_child(hem_trim)
+	var belt := _band(visual, "LongBelt", 0.242, 0.065, 0.80, cloth.darkened(0.30))
+	var lappet := _mesh("LongLappet", BoxMesh.new(), cloth.darkened(0.22))
+	(lappet.mesh as BoxMesh).size = Vector3(0.13, 0.26, 0.04)
+	lappet.position = Vector3(0.10, 0.62, -0.235)
+	lappet.rotation = Vector3(0.06, 0.0, 0.10)
+	visual.add_child(lappet)
+	var quiver_strap := _mesh("LongQuiverStrap", BoxMesh.new(), cloth.darkened(0.34))
+	(quiver_strap.mesh as BoxMesh).size = Vector3(0.06, 0.72, 0.035)
+	quiver_strap.position = Vector3(0.0, 1.14, -0.228)
+	quiver_strap.rotation = Vector3(0.0, 0.0, 0.44)
+	visual.add_child(quiver_strap)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var bracer := _mesh("LongBracer_%s" % side, CapsuleMesh.new(), cloth.darkened(0.20))
+		(bracer.mesh as CapsuleMesh).radius = 0.065
+		(bracer.mesh as CapsuleMesh).height = 0.24
+		(bracer.mesh as CapsuleMesh).radial_segments = 10
+		bracer.position = Vector3(direction * 0.25, 1.02, -0.03)
+		visual.add_child(bracer)
+	var armband := _mesh("TeamAccent_LongArmband", BoxMesh.new(), base)
+	(armband.mesh as BoxMesh).size = Vector3(0.09, 0.075, 0.10)
+	armband.position = Vector3(0.25, 1.14, -0.03)
+	visual.add_child(armband)
+
+## ---- 扇子兵（fan）：扇柄尾坠 + 扇骨根铆钉 + 袖口 / 交领 + 宽袍下摆（队伍色滚边）+ 披帛。
+## 扇的骨架两边逐数相同（武器原点 = 扇柄握点），扇上那几件照搬；人身上的件按本项目 0.28 躯干重算。
+static func _refine_fan_model(visual: Node3D, weapon: Node3D, metal: Color, cloth: Color,
+		base: Color) -> void:
+	var knot := _mesh("FanTasselKnot", SphereMesh.new(), metal.darkened(0.05))
+	(knot.mesh as SphereMesh).radius = 0.034
+	(knot.mesh as SphereMesh).height = 0.068
+	knot.position = Vector3(0.0, -0.26, 0.0)
+	weapon.add_child(knot)
+	for i in 2:
+		var tail := _mesh("FanTasselTail_%d" % i, BoxMesh.new(), cloth.darkened(0.14))
+		(tail.mesh as BoxMesh).size = Vector3(0.028, 0.17, 0.028)
+		tail.position = Vector3(0.018 * float(i - 0.5) * 2.0, -0.37, 0.012 * float(i))
+		tail.rotation = Vector3(0.0, 0.0, 0.10 * float(i - 0.5) * 2.0)
+		weapon.add_child(tail)
+	## 扇骨根部铆钉：五道扇骨从柄头散开，钉一圈小点就"有骨"了
+	for i in FAN_RIB_COUNT:
+		var angle := deg_to_rad(-FAN_HALF_ARC_DEG + 90.0 / float(FAN_RIB_COUNT) * float(i))
+		var rivet := _mesh("FanRibBolt_%d" % i, SphereMesh.new(), metal.lightened(0.12))
+		(rivet.mesh as SphereMesh).radius = 0.021
+		(rivet.mesh as SphereMesh).height = 0.042
+		rivet.position = Vector3(sin(angle) * 0.13, 0.030, -cos(angle) * 0.13)
+		(rivet.material_override as StandardMaterial3D).emission_energy_multiplier = 0.45
+		weapon.add_child(rivet)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var cuff := _mesh("FanCuff_%s" % side, CylinderMesh.new(), cloth.darkened(0.20))
+		(cuff.mesh as CylinderMesh).top_radius = 0.100
+		(cuff.mesh as CylinderMesh).bottom_radius = 0.100
+		(cuff.mesh as CylinderMesh).height = 0.10
+		(cuff.mesh as CylinderMesh).radial_segments = 14
+		cuff.position = Vector3(direction * 0.30, 1.04, -0.02)
+		cuff.rotation = Vector3(0.0, 0.0, direction * 1.35)
+		visual.add_child(cuff)
+		var collar := _mesh("FanCollar_%s" % side, BoxMesh.new(), cloth.darkened(0.26))
+		(collar.mesh as BoxMesh).size = Vector3(0.07, 0.32, 0.05)
+		collar.position = Vector3(direction * 0.09, 1.26, -0.285)
+		collar.rotation = Vector3(0.0, 0.0, direction * 0.42)
+		visual.add_child(collar)
+	var sash := _band(visual, "FanSash", 0.295, 0.09, 0.82, cloth.darkened(0.02))
+	## ---- 宽袍下摆（喇叭口）+ 队伍色滚边 + 披帛 + 腰间垂饰
+	var skirt := _mesh("FanRobeSkirt", CylinderMesh.new(), cloth.darkened(0.14))
+	(skirt.mesh as CylinderMesh).top_radius = 0.300
+	(skirt.mesh as CylinderMesh).bottom_radius = 0.385
+	(skirt.mesh as CylinderMesh).height = 0.42
+	(skirt.mesh as CylinderMesh).radial_segments = 18
+	skirt.position = Vector3(0.0, 0.58, 0.0)
+	visual.add_child(skirt)
+	var hem_trim := _mesh("TeamAccent_FanHem", CylinderMesh.new(), base.lightened(0.10))
+	(hem_trim.mesh as CylinderMesh).top_radius = 0.387
+	(hem_trim.mesh as CylinderMesh).bottom_radius = 0.387
+	(hem_trim.mesh as CylinderMesh).height = 0.055
+	(hem_trim.mesh as CylinderMesh).radial_segments = 18
+	hem_trim.position = Vector3(0.0, 0.385, 0.0)
+	visual.add_child(hem_trim)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var shawl := _mesh("FanShawl_%s" % side, BoxMesh.new(), cloth.lightened(0.06))
+		(shawl.mesh as BoxMesh).size = Vector3(0.09, 0.44, 0.045)
+		shawl.position = Vector3(direction * 0.11, 1.18, -0.285)
+		shawl.rotation = Vector3(0.0, 0.0, direction * 0.50)
+		visual.add_child(shawl)
+	var lappet := _mesh("FanLappet", BoxMesh.new(), cloth.darkened(0.26))
+	(lappet.mesh as BoxMesh).size = Vector3(0.12, 0.24, 0.04)
+	lappet.position = Vector3(0.10, 0.68, -0.29)
+	lappet.rotation = Vector3(0.06, 0.0, 0.12)
+	visual.add_child(lappet)
+
+## ---- 火枪兵（musket）：枪管铁箍 + 准星 + 背带 + 火药袋 + 交叉皮带。
+## 枪上那几件是 `weapon` 局部坐标（两边枪管/护木逐数相同，照搬）；人身上的件按 0.27 躯干重算。
+static func _refine_musket_model(visual: Node3D, weapon: Node3D, metal: Color,
+		wood: Color, cloth: Color) -> void:
+	for i in 2:
+		var ring := _mesh("MusketBarrelBand_%d" % i, CylinderMesh.new(), metal.darkened(0.06))
+		(ring.mesh as CylinderMesh).top_radius = 0.038
+		(ring.mesh as CylinderMesh).bottom_radius = 0.038
+		(ring.mesh as CylinderMesh).height = 0.035
+		(ring.mesh as CylinderMesh).radial_segments = 10
+		ring.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+		ring.position = Vector3(0.0, 0.045, -0.44 - 0.50 * float(i))
+		_polish_metal_finish(ring)
+		weapon.add_child(ring)
+	var sight := _mesh("MusketSight", BoxMesh.new(), metal.lightened(0.14))
+	(sight.mesh as BoxMesh).size = Vector3(0.020, 0.055, 0.022)
+	sight.position = Vector3(0.0, 0.100, -1.10)
+	_polish_metal_finish(sight)
+	weapon.add_child(sight)
+	var sling := _mesh("MusketSling", BoxMesh.new(), cloth.darkened(0.30))
+	(sling.mesh as BoxMesh).size = Vector3(0.022, 0.022, 0.78)
+	sling.position = Vector3(0.010, -0.075, -0.28)
+	sling.rotation = Vector3(0.05, 0.0, 0.0)
+	weapon.add_child(sling)
+	var horn := _mesh("PowderHorn", SphereMesh.new(), Color(0.44, 0.32, 0.18))
+	(horn.mesh as SphereMesh).radius = 0.070
+	(horn.mesh as SphereMesh).height = 0.14
+	horn.scale = Vector3(1.0, 1.0, 1.35)
+	horn.position = Vector3(0.30, 1.00, -0.08)
+	visual.add_child(horn)
+	for i in 2:
+		var direction := -1.0 if i == 0 else 1.0
+		var strap := _mesh("MusketStrap_%d" % i, BoxMesh.new(), wood.darkened(0.10))
+		(strap.mesh as BoxMesh).size = Vector3(0.085, 0.70, 0.035)
+		strap.position = Vector3(direction * 0.04, 1.14, -0.275)
+		strap.rotation = Vector3(0.0, 0.0, direction * 0.30)
+		visual.add_child(strap)
+
+## ---- 武士大师（master）：镡缘金环 + 刀尖寒光 + 腰间刀鞘 + 羽织下摆 + 肩甲。
+## ⚠️ 本项目刀身是**三段反り**（每段后仰 12°），本地版那根 1.24 m 直刃高光不能照搬 ——
+## 改成"镡缘金环 + 刀尖寒光"两笔，弧形刃上不贴直条；人身上的件按 0.40 躯干重算。
+static func _refine_master_model(visual: Node3D, weapon: Node3D, metal: Color, cloth: Color) -> void:
+	var tsuba_rim := _mesh("KatanaTsubaRim", TorusMesh.new(), metal.lightened(0.18))
+	(tsuba_rim.mesh as TorusMesh).inner_radius = 0.088
+	(tsuba_rim.mesh as TorusMesh).outer_radius = 0.105
+	(tsuba_rim.mesh as TorusMesh).rings = 16
+	(tsuba_rim.mesh as TorusMesh).ring_segments = 6
+	tsuba_rim.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	tsuba_rim.position = Vector3(0.0, 0.0, -0.030)
+	_polish_metal_finish(tsuba_rim)
+	weapon.add_child(tsuba_rim)
+	## 刀尖寒光：三段反り拼完的梢 ≈ (0, 0.26, -1.24)（见 `master` 支的分段累加），镶一颗发光棱尖
+	var tip_glint := _mesh("KatanaTipGlint", PrismMesh.new(), metal.lightened(0.30))
+	(tip_glint.mesh as PrismMesh).size = Vector3(0.030, 0.030, 0.10)
+	tip_glint.position = Vector3(0.0, 0.262, -1.255)
+	tip_glint.rotation = Vector3(deg_to_rad(24.0), 0.0, 0.0)
+	(tip_glint.material_override as StandardMaterial3D).emission_energy_multiplier = 1.6
+	weapon.add_child(tip_glint)
+	var obi := _band(visual, "MasterObi", 0.425, 0.12, 0.86, cloth.darkened(0.28))
+	var saya := _mesh("KatanaSaya", BoxMesh.new(), Color(0.14, 0.13, 0.15))
+	(saya.mesh as BoxMesh).size = Vector3(0.055, 0.065, 0.92)
+	saya.position = Vector3(-0.47, 0.80, 0.06)
+	saya.rotation = Vector3(1.22, 0.0, 0.20)
+	visual.add_child(saya)
+	var hem := _band(visual, "MasterHaori", 0.445, 0.36, 0.52, cloth.darkened(0.04))
+	hem.scale = Vector3(1.0, 1.0, 0.92)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var plate := _mesh("MasterPauldron_%s" % side, BoxMesh.new(), cloth.darkened(0.32))
+		(plate.mesh as BoxMesh).size = Vector3(0.24, 0.09, 0.32)
+		plate.position = Vector3(direction * 0.44, 1.38, 0.0)
+		plate.rotation = Vector3(0.0, 0.0, -direction * 0.20)
+		visual.add_child(plate)
+
+## ---- 湮灭之瞳（doom_eye）：眼睑铆钉 + 虹膜外环 + 赤道金属环。
+## 全部尺寸由本项目 `DOOM_*` 常量**推导**（不写死），眼睑铆钉沿 `_doom` 支同一套纬度公式落位。
+static func _refine_doom_eye_model(visual: Node3D, weapon: Node3D) -> void:
+	var lid_r := sqrt(maxf(DOOM_CORE_R * DOOM_CORE_R - DOOM_LID_DY * DOOM_LID_DY, 0.01))
+	for i in 8:
+		var angle := TAU * float(i) / 8.0
+		for lid in ["upper", "lower"]:
+			var sign_y := 1.0 if lid == "upper" else -1.0
+			var stud := _mesh("LidStud_%d_%s" % [i, lid], SphereMesh.new(), DOOM_METAL)
+			(stud.mesh as SphereMesh).radius = 0.075
+			(stud.mesh as SphereMesh).height = 0.15
+			stud.position = Vector3(cos(angle) * (lid_r + 0.11), DOOM_CORE_Y + sign_y * DOOM_LID_DY,
+					sin(angle) * (lid_r + 0.11))
+			_polish_metal_finish(stud)
+			visual.add_child(stud)
+	var iris_ring := _mesh("IrisRing", TorusMesh.new(), DOOM_METAL.lightened(0.20))
+	(iris_ring.mesh as TorusMesh).inner_radius = DOOM_IRIS_R + 0.02
+	(iris_ring.mesh as TorusMesh).outer_radius = DOOM_IRIS_R + 0.08
+	(iris_ring.mesh as TorusMesh).rings = 32
+	(iris_ring.mesh as TorusMesh).ring_segments = 6
+	iris_ring.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+	iris_ring.position = Vector3(0.0, 0.0, DOOM_IRIS_BACK)
+	(iris_ring.material_override as StandardMaterial3D).emission_energy_multiplier = 0.80
+	weapon.add_child(iris_ring)
+	var equator := _mesh("EquatorRing", TorusMesh.new(), DOOM_METAL)
+	(equator.mesh as TorusMesh).inner_radius = DOOM_CORE_R + 0.01
+	(equator.mesh as TorusMesh).outer_radius = DOOM_CORE_R + 0.06
+	(equator.mesh as TorusMesh).rings = 48
+	(equator.mesh as TorusMesh).ring_segments = 6
+	equator.position = Vector3(0.0, DOOM_CORE_Y, 0.0)
+	_polish_metal_finish(equator)
+	visual.add_child(equator)
+
+static func _refine_grenadier_model(visual: Node3D, base: Color, metal: Color) -> void:
+	var brass := Color(0.80, 0.64, 0.30)
+	var dark_leather := Color(0.30, 0.22, 0.14)
+	var crown_band := _mesh("CrownBand", CylinderMesh.new(), brass)
+	(crown_band.mesh as CylinderMesh).top_radius = 0.158
+	(crown_band.mesh as CylinderMesh).bottom_radius = 0.166
+	(crown_band.mesh as CylinderMesh).height = 0.065
+	(crown_band.mesh as CylinderMesh).radial_segments = 16
+	crown_band.position = Vector3(0.0, 1.095, 0.0)
+	_polish_metal_finish(crown_band)
+	visual.add_child(crown_band)
+	for i in 5:
+		var angle := -PI * 0.5 + TAU * float(i) / 5.0
+		var point := _fine_detail(_mesh("CrownPoint_%d" % i, CylinderMesh.new(), brass))
+		(point.mesh as CylinderMesh).top_radius = 0.0
+		(point.mesh as CylinderMesh).bottom_radius = 0.028
+		(point.mesh as CylinderMesh).height = 0.12
+		(point.mesh as CylinderMesh).radial_segments = 6
+		point.position = Vector3(cos(angle) * 0.150, 1.175, sin(angle) * 0.150)
+		_polish_metal_finish(point)
+		visual.add_child(point)
+	## 队伍色锚点（2026-11-03）：王冠宝石 / 披风 / 肩章 / 第二颗炸弹的箍 —— 全部带
+	## `TeamAccent` 前缀 + `accent_tint`，策反换边时由 `_repaint_team_accents()` 一起重绘。
+	var crown_gem := _fine_detail(_mesh("TeamAccent_CrownGem", SphereMesh.new(), base))
+	(crown_gem.mesh as SphereMesh).radius = 0.030
+	(crown_gem.mesh as SphereMesh).height = 0.060
+	crown_gem.position = Vector3(0.0, 1.095, -0.165)
+	crown_gem.set_meta("accent_tint", 0.0)
+	visual.add_child(crown_gem)
+	var mantle := _mesh("TeamAccent_RoyalMantle", BoxMesh.new(), base)
+	(mantle.mesh as BoxMesh).size = Vector3(0.42, 0.32, 0.035)
+	mantle.position = Vector3(0.0, 0.87, 0.255)
+	mantle.rotation = Vector3(0.10, 0.0, 0.0)
+	mantle.set_meta("accent_tint", 0.0)
+	visual.add_child(mantle)
+	var mantle_trim := _fine_detail(_mesh("RoyalMantleTrim", BoxMesh.new(), brass))
+	(mantle_trim.mesh as BoxMesh).size = Vector3(0.40, 0.035, 0.040)
+	mantle_trim.position = Vector3(0.0, 0.72, 0.272)
+	mantle_trim.rotation = Vector3(0.10, 0.0, 0.0)
+	visual.add_child(mantle_trim)
+	for side in ["left", "right"]:
+		var direction := -1.0 if side == "left" else 1.0
+		var epaulette := _mesh("TeamAccent_Epaulette_%s" % side, SphereMesh.new(), base)
+		(epaulette.mesh as SphereMesh).radius = 0.105
+		(epaulette.mesh as SphereMesh).height = 0.21
+		(epaulette.mesh as SphereMesh).radial_segments = 10
+		(epaulette.mesh as SphereMesh).rings = 5
+		epaulette.scale = Vector3(1.0, 0.55, 1.0)
+		epaulette.position = Vector3(direction * 0.235, 0.95, -0.02)
+		epaulette.set_meta("accent_tint", 0.0)
+		visual.add_child(epaulette)
+		var stud := _fine_detail(_mesh("EpauletteStud_%s" % side,
+				SphereMesh.new(), metal.lightened(0.20)))
+		(stud.mesh as SphereMesh).radius = 0.025
+		(stud.mesh as SphereMesh).height = 0.05
+		stud.position = Vector3(direction * 0.265, 0.985, -0.02)
+		visual.add_child(stud)
+		var cheek_stud := _fine_detail(_mesh("MaskStud_%s" % side,
+				SphereMesh.new(), brass))
+		(cheek_stud.mesh as SphereMesh).radius = 0.022
+		(cheek_stud.mesh as SphereMesh).height = 0.044
+		cheek_stud.position = Vector3(direction * 0.245, 0.85, -0.292)
+		visual.add_child(cheek_stud)
+		var arm_cuff := _fine_detail(_mesh("ArmCuff_%s" % side,
+				CylinderMesh.new(), brass))
+		(arm_cuff.mesh as CylinderMesh).top_radius = 0.066
+		(arm_cuff.mesh as CylinderMesh).bottom_radius = 0.066
+		(arm_cuff.mesh as CylinderMesh).height = 0.04
+		(arm_cuff.mesh as CylinderMesh).radial_segments = 10
+		arm_cuff.rotation = Vector3(PI * 0.5, 0.0, 0.0)
+		arm_cuff.position = Vector3(direction * 0.235, 0.86, -0.245)
+		visual.add_child(arm_cuff)
+		var pouch := _mesh("BeltPouch_%s" % side, BoxMesh.new(), dark_leather)
+		(pouch.mesh as BoxMesh).size = Vector3(0.10, 0.12, 0.075)
+		pouch.position = Vector3(direction * 0.205, 0.655, -0.13)
+		visual.add_child(pouch)
+	var bandolier := _fine_detail(_mesh("Bandolier", BoxMesh.new(), dark_leather))
+	(bandolier.mesh as BoxMesh).size = Vector3(0.34, 0.065, 0.022)
+	bandolier.position = Vector3(0.0, 0.86, -0.258)
+	bandolier.rotation = Vector3(0.0, 0.0, 0.32)
+	visual.add_child(bandolier)
+	var small_bomb := _mesh("BombSmall", SphereMesh.new(), Color(0.16, 0.16, 0.18))
+	(small_bomb.mesh as SphereMesh).radius = 0.085
+	(small_bomb.mesh as SphereMesh).height = 0.17
+	(small_bomb.mesh as SphereMesh).radial_segments = 10
+	(small_bomb.mesh as SphereMesh).rings = 5
+	small_bomb.position = Vector3(-0.285, 0.575, 0.045)
+	visual.add_child(small_bomb)
+	var small_band := _fine_detail(_mesh("TeamAccent_BombSmallBand", CylinderMesh.new(), base))
+	(small_band.mesh as CylinderMesh).top_radius = 0.090
+	(small_band.mesh as CylinderMesh).bottom_radius = 0.090
+	(small_band.mesh as CylinderMesh).height = 0.03
+	(small_band.mesh as CylinderMesh).radial_segments = 10
+	small_band.position = Vector3(-0.285, 0.575, 0.045)
+	small_band.set_meta("accent_tint", 0.0)
+	visual.add_child(small_band)
+	var bomb_strap := _fine_detail(_mesh("BombStrap", BoxMesh.new(), dark_leather))
+	(bomb_strap.mesh as BoxMesh).size = Vector3(0.035, 0.16, 0.028)
+	bomb_strap.position = Vector3(-0.27, 0.655, 0.045)
+	visual.add_child(bomb_strap)
+	for side in ["left", "right"]:
+		for spot in ["front", "rear"]:
+			var leg_cuff := _fine_detail(_mesh("LegCuff_%s_%s" % [spot, side],
+					CylinderMesh.new(), dark_leather))
+			(leg_cuff.mesh as CylinderMesh).top_radius = 0.084
+			(leg_cuff.mesh as CylinderMesh).bottom_radius = 0.084
+			(leg_cuff.mesh as CylinderMesh).height = 0.035
+			(leg_cuff.mesh as CylinderMesh).radial_segments = 10
+			leg_cuff.position = Vector3(-0.13 if side == "left" else 0.13, 0.145,
+					-0.11 if spot == "front" else 0.11)
+			visual.add_child(leg_cuff)
+	var fuse_spark := visual.get_node_or_null("SparkTip") as MeshInstance3D
+	if fuse_spark != null:
+		fuse_spark.scale = Vector3(1.15, 1.15, 1.15)
+
 ## 月牙盾：一段缺口朝向身体（+X）的弧带。外弧鼓向左外侧，读起来是弯月而不是圆盾。
 ## 双面都画，调用方关掉背面剔除。
 static func _crescent_shield_mesh() -> ArrayMesh:
@@ -859,6 +2837,42 @@ static func _paint_team_color(mat: StandardMaterial3D, src: Color, dst: Color, s
 static func _same_rgb(a: Color, b: Color) -> bool:
 	return is_equal_approx(a.r, b.r) and is_equal_approx(a.g, b.g) and is_equal_approx(a.b, b.b)
 
+## 弓臂梢在弓组件局部坐标里的位置（2026-11-02 新增，为"两半弓弦"提供弦端坐标）。
+## 弓臂是一根 `CylinderMesh`：网格沿自身 **+Y** 长出去，所以梢 = 枢轴位置 + 姿态 × (0, ±半长, 0)；
+## 名字以 `_upper` 结尾的那根取 **+半长**、`_lower` 取 −半长（与各支自己算 `up` 的写法同号）。
+static func _limb_tip(bow: Node3D, limb_name: String) -> Vector3:
+	var limb := bow.get_node_or_null(limb_name) as MeshInstance3D
+	if limb == null or not (limb.mesh is CylinderMesh):
+		return Vector3.ZERO
+	var half_len: float = (limb.mesh as CylinderMesh).height * 0.5
+	var up := 1.0 if limb_name.ends_with("upper") else -1.0
+	return limb.position + limb.transform.basis * Vector3(0.0, half_len * up, 0.0)
+
+## 两半弓弦（2026-11-02 新增，用户："拉弓的时候弦不要脱离弓"）。
+## 每半 = 枢轴（`BowStringHalf_<end>`，位置**钉在弓臂梢**上）+ 弦杆（`BowStringBar_<end>`，沿枢轴的 +Z 长出去）。
+## 原先两种弓手都是**一整根直弦**，拉弓时整根沿 +Z 平移 ⇒ 两头会离开弓梢 0.2 m（用户看到的"弦脱离弓"）。
+## 拆成两半之后弦端永远在弓梢上，弦心由 `unit3d.gd#_pose_bow_string_to_hand()` 每帧追着**拉弦手**走。
+## ⚠️ 弦杆名字必须以 `BowStringBar_` 开头 —— `_own_bow_string_meshes()` 靠它给每个单位复制一份网格
+## （网格是模板共用的，不复制的话所有弓手会一起变长）。
+static func _build_bow_string(parent: Node3D, ends: Array, tips: Array[Vector3],
+		vertex: Vector3, thickness: float, color: Color) -> void:
+	for i in ends.size():
+		var end := String(ends[i])
+		var tip: Vector3 = tips[i]
+		var span := vertex - tip
+		var span_len := maxf(span.length(), 0.01)
+		var half := Node3D.new()
+		half.name = "BowStringHalf_%s" % end
+		half.position = tip
+		## 与弩车半弦同一套"+Z 对上这一段"的朝向（俯仰 `asin` + 偏航 `atan2`）
+		half.rotation = Vector3(-asin(clampf(span.y / span_len, -1.0, 1.0)),
+				atan2(span.x, span.z), 0.0)
+		var bar := _mesh("BowStringBar_%s" % end, BoxMesh.new(), color)
+		(bar.mesh as BoxMesh).size = Vector3(thickness, thickness, span_len)
+		bar.position = Vector3(0.0, 0.0, span_len * 0.5)
+		half.add_child(bar)
+		parent.add_child(half)
+
 ## 弩车弦杆每帧改长度。共用网格会让所有弩车一起拉弦。
 static func _own_bow_string_meshes(root: Node) -> void:
 	for node in root.find_children("BowStringBar_*", "MeshInstance3D", true, false):
@@ -922,15 +2936,32 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			humanoid.add_child(head)
 
 			# 朝向标记（鼻尖朝 -Z，提示"正面"）
-			var nose := _mesh("Nose", BoxMesh.new(), base)
-			var nose_mesh: BoxMesh = nose.mesh
-			nose_mesh.size = Vector3(0.12, 0.12, 0.22)
-			nose.position = Vector3(0.0, 1.62, -0.20)
+			## ⚠️ **2026-11-03 两处全局修正**（用户："把剑盾兵的鼻子变到和皮肤相同的颜色" →
+			## 顺带把同一口径推给所有兵种，因为出厂那条 0.12 × 0.12 × 0.22 的**红方块**
+			## 在**每个**兵种脸上都是一块凸出 10 cm 的砖）：
+			##   ① 底色 `base` → **`skin`**；
+			##   ② 形状 方块 → **小球**（r 0.038，扁一点），贴着**头球实测半径**放，凸出量 1.4 cm
+			##      （判据与剑盾兵那颗 r 0.035 的鼻尖同一档）。
+			## 它仍不是队伍色锚点（肤色两队一致），所以不带 `TeamAccent` 前缀、不写 `accent_tint`。
+			var nose := _mesh("Nose", SphereMesh.new(), skin)
+			var nose_mesh: SphereMesh = nose.mesh
+			nose_mesh.radius = 0.038
+			nose_mesh.height = 0.076
+			nose_mesh.radial_segments = 10
+			nose_mesh.rings = 6
+			nose.scale = Vector3(0.75, 1.0, 1.05)
+			nose.position = Vector3(0.0, 1.610,
+					-(float(build_style["head_radius"]) - 0.026))
 			humanoid.add_child(nose)
 
 		# 通道 ② 头盔。⚠️ 传的是 `humanoid`：`_headgear()` 的形参名叫 `visual`，
 		# 但它的语义就是"头盔挂到哪个父节点" —— 骑乘时那个父节点是 `Rider`。
 		_headgear(type_id, humanoid, metal, cloth)
+		## 通用五官（2026-11-03）：还没做精修的兵种，在这里补一对**眼球**。
+		## 已经自带五官的（剑盾兵 / 长矛兵 / 短弓手 / 骑士）跳过 —— 它们各自在精修函数里按
+		## 自己的护鼻 / 目镜板定位，再补一对就是四只眼。
+		if not HEADLESS_TYPES.has(type_id) and not FACE_REFINED_TYPES.has(type_id):
+			_add_humanoid_eyes(humanoid, metal)
 
 	var weapon: Node3D = null
 	var shield: Node3D = null
@@ -957,7 +2988,12 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			var hilt := _mesh("Hilt", BoxMesh.new(), wood)
 			(hilt.mesh as BoxMesh).size = Vector3(0.20, 0.06, 0.08)
 			weapon.add_child(hilt)
-			weapon.position = Vector3(0.36, 1.05, -0.10)
+			## ⚠️ 2026-11-02：骑士的躯干比剑盾兵宽（0.34 对 0.29）⇒ 握点跟着外移 0.06，
+			## 否则握持手（掌半径 0.075）会有一半埋进肚子里。
+			## ⚠️ **2026-11-03**：这一格只是**出厂默认**（骑士用）；剑盾兵的握点在
+			## `_refine_sword_weapon()` 里被改写（让开护肩 + 抬高到剑柄上），刃口朝向在 `_sword_blade_mesh()`
+			## 的截面上（宽轴 Y）；旋转两边**同一个值** `(π/2, 0, 0)`，谁也不单独滚转。
+			weapon.position = Vector3(0.42, 1.05, -0.10)
 			weapon.rotation = Vector3(PI * 0.5, 0.0, 0.0)  ## 局部 −Z 转到 +Y：剑尖朝上
 			visual.add_child(weapon)
 			# 左手：盾。⚠️ **薄轴必须是 Z**——原先写成 (0.10, 0.78, 0.58)，薄轴落在 X 上，
@@ -1001,8 +3037,25 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			shield_pivot.add_child(boss)
 			visual.add_child(shield_pivot)
 			shield = shield_pivot
+			if type_id == "knight":
+				## 骑士的手臂（2026-11-02，参照剑盾兵那套）：动作同款，但躯干宽 0.05 ⇒ **肩 / 肘 / 握点各外移一档**，
+				## 否则手会陷进肚子（判据见 `_add_arms()`）。左手仍落在盾枢轴后方。
+				## ⚠️ **2026-11-03**：右手握点跟着 `KNIGHT_GRIP` 挪到 z **−0.32**（让开护肩球壳，
+				## 见 `KNIGHT_GRIP` 的说明），肘同步往前折到 z −0.16 —— 前臂 ≈0.21 m，
+				## 与剑盾兵的 0.23 m 同一档，不会被拉成面条（上限 `UNIT_ARM_REACH_MAX` 0.62）。
+				_add_arms(humanoid, [
+					["right", Vector3(0.32, 1.37, -0.02), Vector3(0.46, 1.18, -0.16),
+							Vector3(0.42, 1.05, -0.32)],
+					["left", Vector3(-0.32, 1.37, -0.02), Vector3(-0.46, 1.19, -0.16),
+							Vector3(-0.34, 0.96, -0.38)],
+				], base, skin, wood.darkened(0.36), weapon)
 			if type_id == "sword":
 				_add_saint_look(visual, weapon)
+				_refine_sword_model(visual, weapon, shield_pivot, base, metal, wood, skin)
+			elif type_id == "knight":
+				## 2026-11-03：骑士按剑盾兵的建模标准重做（甲片分层 / 队伍色锚点 / 大剑 / 目缝）。
+				## ⚠️ 必须排在 `_add_arms()` **之后**：护腕要挂到前臂节点下、拳心要改到剑柄上。
+				_refine_knight_model(visual, weapon, shield_pivot, base, metal, wood)
 		"spear":
 			# 双手长矛，长度视觉上对得上 3m 射程。
 			# ⚠️ **平直持握**（2026-09-18 用户要求）：矛杆水平指向前方（本体的 −Z），
@@ -1040,6 +3093,7 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			crescent.visible = false
 			visual.add_child(crescent)
 			shield = crescent
+			_refine_spear_model(visual, weapon, base, metal, wood, cloth, skin)
 		"shortbow":
 			# 短弓手（2026-09-25 由「弓兵」改名，几何一字未改）：弓**弓臂在前、弓弦在后**
 			# 弓面落在**本体的 YZ 平面**上：弓臂朝 −Z 鼓出，弓弦在 +Z 一侧拉直。
@@ -1067,10 +3121,15 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 				limb.rotation = Vector3(0.30 * up, 0.0, 0.0)   ## 两端向 +Z 收，形成朝 −Z 鼓的弓弧
 				limb.position = Vector3(0.36, 1.05 + 0.40 * up, -0.34)
 				weapon.add_child(limb)
-			var bow_string := _mesh("BowString", BoxMesh.new(), Color(0.92, 0.92, 0.88))
-			(bow_string.mesh as BoxMesh).size = Vector3(0.024, 1.30, 0.024)
-			bow_string.position = Vector3(0.36, 1.05, -0.26)   ## 弦在弓臂**后面**（+Z 侧）
+			## 弓弦（2026-11-02 用户："拉弓的时候弦不要脱离弓"）：**拆成上下两半**，弦端钉在两根弓臂的梢上
+			## （与弩车 `BowStringHalf_*` 同一套做法），弦心落在**拉弦手的静止位置**（z = −0.30）。
+			## 原先是一整根 1.30 m 的直弦、拉弓时整根沿 +Z 平移 ⇒ 两头离开弓梢（"弦脱离弓"）。
+			var bow_string := Node3D.new()
+			bow_string.name = "BowString"
 			weapon.add_child(bow_string)
+			_build_bow_string(bow_string, ["upper", "lower"],
+					[_limb_tip(weapon, "BowLimb_upper"), _limb_tip(weapon, "BowLimb_lower")],
+					Vector3(0.36, 1.05, -0.30), 0.024, Color(0.92, 0.92, 0.88))
 			visual.add_child(weapon)
 			# 通道 ④ 背部挂件：箭袋斜挂在背后（+Z 一侧），露出的箭羽给它一个额外的后侧轮廓
 			var quiver := _mesh("Quiver", CylinderMesh.new(), cloth)
@@ -1087,6 +3146,7 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			fletching.rotation = Vector3(0.34, 0.0, 0.42)
 			fletching.position = Vector3(0.04, 1.53, 0.44)
 			visual.add_child(fletching)
+			_refine_shortbow_model(visual, weapon, base, metal, wood, cloth, skin)
 		"longbow":
 			## 长弓手（2026-09-25 新增）：一把**比人还高的长弓**（弓高 ≈1.60 m > 体型高 1.34 m）——
 			## 这是"长弓"在轮廓上唯一的说法，也是它与短弓手（弓高 ≈1.10 m）最关键的区别。
@@ -1115,10 +3175,16 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 				long_limb.rotation = Vector3(0.26 * long_up, 0.0, 0.0)
 				long_limb.position = Vector3(0.34, 1.00 + 0.60 * long_up, -0.38)
 				weapon.add_child(long_limb)
-			var long_string := _mesh("LongbowString", BoxMesh.new(), Color(0.92, 0.92, 0.88))
-			(long_string.mesh as BoxMesh).size = Vector3(0.022, 1.86, 0.022)
-			long_string.position = Vector3(0.34, 1.00, -0.28)
+			## 长弓弦（2026-11-02，与短弓手同一条改动）：拆成上下两半、弦端钉在弓臂梢上。
+			## ⚠️ 顺带修掉一处尺寸账：旧弦是一根写死的 **1.86 m** 直杆（y 0.07 … 1.93），
+			## 而两根弓臂的梢实际在 y **0.023 / 1.977**（跨 1.95 m）⇒ 两头各差 4～5 cm、露着梢尖。
+			## 现在弦长由「梢 → 弦心」实长推出，不再写死。
+			var long_string := Node3D.new()
+			long_string.name = "LongbowString"
 			weapon.add_child(long_string)
+			_build_bow_string(long_string, ["upper", "lower"],
+					[_limb_tip(weapon, "LongbowLimb_upper"), _limb_tip(weapon, "LongbowLimb_lower")],
+					Vector3(0.30, 1.02, -0.26), 0.022, Color(0.92, 0.92, 0.88))
 			visual.add_child(weapon)
 			## 通道 ④ 背部挂件：**箭袋比短弓手的更长**（装的是长箭），位置同样斜挂背后
 			var long_quiver := _mesh("LongQuiver", CylinderMesh.new(), cloth)
@@ -1130,6 +3196,16 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			long_quiver.rotation = Vector3(0.30, 0.0, 0.42)
 			long_quiver.position = Vector3(0.14, 1.28, 0.30)
 			visual.add_child(long_quiver)
+			## 手臂（2026-11-02，参照剑盾兵那套）：长弓的握把**在腰际**（弓立在地上拉），
+			## 所以右肩→右肘要往下多走一截；左手跨到身体右侧去拉弦，肘部压到身前（z = −0.42）避免穿胸。
+			_add_arms(humanoid, [
+				["right", Vector3(0.22, 1.36, -0.02), Vector3(0.34, 1.16, -0.30),
+						Vector3(0.34, 1.00, -0.50)],
+				["left", Vector3(-0.22, 1.36, -0.02), Vector3(-0.14, 1.17, -0.42),
+						Vector3(0.30, 1.02, -0.26)],
+			], base, skin, wood.darkened(0.36), weapon)
+			## 装饰精修（2026-11-03 自本地版移植）：弓腹补段 / 弦端缠头 / 猎手装束 —— 见 `_refine_longbow_model()`
+			_refine_longbow_model(visual, weapon, metal, wood, cloth, base)
 		"lightcav":
 			## 轻骑兵（矛）（2026-09-25 新增 / 同日第三条改骑马）：一杆**冲枪**——比长矛兵的长矛更长
 			## （3.6 m 对 3.0 m）、握点更靠后（矛尾留在身后一大截），这是"夹在腋下向前压"的持枪姿态。
@@ -1166,6 +3242,15 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			weapon.add_child(lance_guard)
 			weapon.position = Vector3(0.26, 1.02, 0.24)
 			visual.add_child(weapon)
+			## 手臂（2026-11-02，参照剑盾兵那套）：右手在**握点**（矛尾留在身后），左手往前扶杆——
+			## "夹在腋下向前压"这个姿态就是这么读出来的。⚠️ 挂在 `humanoid`（= 骑乘时的 `Rider`）下，
+			## 否则手臂会留在马肚子那一层。
+			_add_arms(humanoid, [
+				["right", Vector3(0.22, 1.34, -0.02), Vector3(0.32, 1.16, 0.08),
+						Vector3(0.26, 1.02, 0.24)],
+				["left", Vector3(-0.22, 1.34, -0.02), Vector3(-0.16, 1.14, -0.30),
+						Vector3(0.22, 0.98, -0.55)],
+			], base, skin, wood.darkened(0.36), weapon)
 		"fan":
 			## 扇子兵（2026-09-18 / 2026-09-24 R2 重做）：右手一柄**军配扇式大扇**——
 			## 扇面是**实心平面扇形**（`_fan_face_mesh()` 手搓的 `ArrayMesh`，正反两面都可见），
@@ -1217,6 +3302,16 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 				weapon.add_child(edge)
 			weapon.position = Vector3(0.40, 1.15, -0.50)   ## 握在身侧偏前：扇面整体探出躯干
 			visual.add_child(weapon)
+			## 手臂（2026-11-02，参照剑盾兵那套）：右手握扇柄（= 扇子原点），肘部跟着往外撑，
+			## 左手是**空手**——自然垂在身侧偏前，不碰扇面也不穿躯干。
+			_add_arms(humanoid, [
+				["right", Vector3(0.26, 1.34, -0.02), Vector3(0.44, 1.22, -0.28),
+						Vector3(0.40, 1.15, -0.50)],
+				["left", Vector3(-0.26, 1.34, -0.02), Vector3(-0.40, 1.18, -0.12),
+						Vector3(-0.30, 1.00, -0.28), false],
+			], base, skin, wood.darkened(0.36), weapon)
+			## 装饰精修（2026-11-03 自本地版移植）：扇柄尾坠 / 扇骨铆钉 / 宽袍披帛 —— 见 `_refine_fan_model()`
+			_refine_fan_model(visual, weapon, metal, cloth, base)
 		"catapult":
 			## 投石车（2026-09-18 R2 / 2026-09-24 R2 重做）：按参考图（木制扭力抛石机）还原轮廓。
 			##
@@ -1661,6 +3756,14 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			## 2026-09-24 用户："斧头还得往上调" ⇒ 握点 0.85 → **1.12**（斧头落到肩/头的高度）
 			weapon.position = Vector3(0.0, 1.12, -0.18)
 			visual.add_child(weapon)
+			## 手臂（2026-11-02，参照剑盾兵那套）：双持战斧 ⇒ 两条手臂**左右对称**，
+			## 手握在两根斧柄上（斧柄 world x = ±0.34、y = 1.09）。手离躯干轴线 0.384 m > 半径 0.25 m ✓
+			_add_arms(humanoid, [
+				["right", Vector3(0.24, 1.36, -0.02), Vector3(0.44, 1.20, -0.08),
+						Vector3(0.34, 1.09, -0.18)],
+				["left", Vector3(-0.24, 1.36, -0.02), Vector3(-0.44, 1.20, -0.08),
+						Vector3(-0.34, 1.09, -0.18)],
+			], base, skin, wood.darkened(0.36), weapon)
 			## 2026-09-24 用户："给狂战士加一个类似维京海盗的头盔" ⇒ 换成**带角头盔**：
 			## 半球顶 + 顶箍 + 护鼻 + 左右两支**牛角**（牛角是白盒下最远的辨识特征）。
 			var helm := _mesh("HelmDome", SphereMesh.new(), metal)
@@ -1695,6 +3798,10 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 				horn.rotation = Vector3(deg_to_rad(-18.0), 0.0, horn_dir * deg_to_rad(-52.0))
 				horn.position = Vector3(horn_dir * 0.18, 1.80, 0.0)
 				visual.add_child(horn)
+
+			## 2026-11-03：按剑盾兵的标准补"毛皮 + 皮带 + 护腕 + 队伍色腰布"三层。
+			## ⚠️ 必须排在 `_add_arms()` **之后**（护腕要挂到前臂节点下）。
+			_refine_berserker_model(visual, weapon, base, metal, wood)
 
 		"flamefist":
 			## 火焰拳（2026-09-19 建模重做，用户口径："人形，以第一张图为准"）：参考图 =
@@ -2056,6 +4163,16 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			## 握点 = 右手（x = +0.36：正好出躯干表面）：枪身在胸口高度平端、枪尾留在肩侧，枪口指向敌人
 			weapon.position = Vector3(0.36, 1.12, -0.06)
 			visual.add_child(weapon)
+			## 手臂（2026-11-02，参照剑盾兵那套）：右手扣在扳机那一侧（= 武器原点），
+			## 左手往前托护木（world z ≈ −0.62）；左肘压到身前，前臂才不穿胸。
+			_add_arms(humanoid, [
+				["right", Vector3(0.26, 1.36, -0.02), Vector3(0.40, 1.20, 0.02),
+						Vector3(0.36, 1.12, -0.06)],
+				["left", Vector3(-0.29, 1.36, -0.02), Vector3(-0.20, 1.16, -0.40),
+						Vector3(0.30, 1.09, -0.62)],
+			], base, skin, wood.darkened(0.36), weapon)
+			## 装饰精修（2026-11-03 自本地版移植）：枪管铁箍 / 准星 / 火药袋 —— 见 `_refine_musket_model()`
+			_refine_musket_model(visual, weapon, metal, wood, cloth)
 		"master":
 			## 武士大师（2026-09-25 新增，**第二个 boss 单位**）：右手一柄**太刀** —— 细长刀身 + 圆镡 + 缠柄。
 			## 姿态是**刀尖朝上、略向后仰 10°**；出手走 `unit3d.gd#_animate_attack()` 的**默认挥砍支**
@@ -2115,9 +4232,21 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			kashira.position = Vector3(0.0, 0.0, 0.375)
 			weapon.add_child(kashira)
 			## 握点 = 右手（x = +0.46：出躯干表面一点），镡在胸口高度 ⇒ 刀身向上抽出 1.26 m、刀尖略朝后
-			weapon.position = Vector3(0.46, 1.06, -0.08)
+			## ⚠️ 2026-11-02：握点 x 0.46 → **0.50** —— 武士大师是全场最宽的躯干（0.40），
+			## 0.46 那个位置刚好贴着身体表面，加手臂之后手掌会有一半埋进去。
+			weapon.position = Vector3(0.50, 1.06, -0.08)
 			weapon.rotation = Vector3(PI * 0.5 + deg_to_rad(10.0), 0.0, 0.0)   ## 局部 −Z → 略后仰的 +Y：刀尖朝上
 			visual.add_child(weapon)
+			## 手臂（2026-11-02，参照剑盾兵那套）：右手握刀柄，左手**空手**垂在身侧偏前。
+			## 肩点比其他兵种高（体高 1.46）、也更外（半径 0.40）⇒ 三个点各自外移。
+			_add_arms(humanoid, [
+				["right", Vector3(0.38, 1.40, -0.02), Vector3(0.52, 1.22, -0.04),
+						Vector3(0.50, 1.06, -0.08)],
+				["left", Vector3(-0.38, 1.40, -0.02), Vector3(-0.50, 1.20, -0.12),
+						Vector3(-0.42, 1.02, -0.30), false],
+			], base, skin, wood.darkened(0.36), weapon)
+			## 装饰精修（2026-11-03 自本地版移植）：镡缘金环 / 刀尖寒光 / 刀鞘羽织 —— 见 `_refine_master_model()`
+			_refine_master_model(visual, weapon, metal, cloth)
 		"corruptor":
 			## 心灵腐化师（2026-09-25 第二轮新增）：**长袍 + 兜帽 + 悬浮**，手上托着一颗自发光棱镜。
 			## 参数与理由集中在常量区（`CORRUPTOR_*` 段），这里按"从下往上、从内到外"拼：
@@ -2370,11 +4499,15 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 						GRENADIER_MASK_Y + 0.035, GRENADIER_MASK_Z - 0.020)
 				visual.add_child(eye_slit)
 			## ④ 护颊（**队伍色锚点 ②**）：面具两侧各一片 —— 侧面看队伍色，正面看白玉
+			## ⚠️ 2026-11-03：注释写着"锚点"，名字却没带 `TeamAccent` 前缀 ⇒
+			## `unit3d.gd#_repaint_team_accents()` 根本看不到它，策反换边后这两片**还是旧队的颜色**。
+			## 现在把前缀补上（`accent_tint` 0 = 不压暗不提亮，与躯干同色）。
 			for side in ["left", "right"]:
-				var cheek := _mesh("CheekPlate_%s" % side, BoxMesh.new(), base)
+				var cheek := _mesh("TeamAccent_CheekPlate_%s" % side, BoxMesh.new(), base)
 				(cheek.mesh as BoxMesh).size = Vector3(0.06, 0.20, 0.16)
 				cheek.position = Vector3(-0.205 if side == "left" else 0.205,
 						GRENADIER_MASK_Y - 0.01, GRENADIER_MASK_Z + 0.03)
+				cheek.set_meta("accent_tint", 0.0)
 				visual.add_child(cheek)
 			## ⑤ 腰侧那颗炸弹（**队伍色锚点 ③** + 技能预告）：深色球 + 队伍色箍 + 一小截引线，
 			##    "自爆"这件事必须在**活着的时候**就看得出来，不能等它炸了才知道。
@@ -2386,13 +4519,14 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			bomb_mesh.rings = 6
 			bomb.position = GRENADIER_BOMB_LOCAL
 			visual.add_child(bomb)
-			var bomb_band := _mesh("BombBand", CylinderMesh.new(), base)
+			var bomb_band := _mesh("TeamAccent_BombBand", CylinderMesh.new(), base)
 			var bomb_band_mesh: CylinderMesh = bomb_band.mesh
 			bomb_band_mesh.top_radius = GRENADIER_BOMB_R * 1.03
 			bomb_band_mesh.bottom_radius = GRENADIER_BOMB_R * 1.03
 			bomb_band_mesh.height = 0.035
 			bomb_band_mesh.radial_segments = 12
 			bomb_band.position = GRENADIER_BOMB_LOCAL
+			bomb_band.set_meta("accent_tint", 0.0)
 			visual.add_child(bomb_band)
 			## ⑥ 引信：球顶 → 一道浅色箍 → 一根细杆（**负角 ⇒ 杆梢朝 −Z 前倾**）→ 杆梢上的火花
 			var fuse_cap := _mesh("Fuse_Cap", CylinderMesh.new(), Color(0.42, 0.36, 0.28))
@@ -2468,7 +4602,9 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 				weapon.add_child(mitt)
 			weapon.position = Vector3.ZERO     ## 挂点即原点：两条手臂的坐标本来就是按本体坐标写的
 			visual.add_child(weapon)
-			## ⑧ 自爆的观感（纯表现）：几何出厂即隐藏，登记点见该函数的说明
+			## ⑧ 精细外观：王冠 / 披风 / 肩章 / 腰包 / 副炸弹
+			_refine_grenadier_model(visual, base, metal)
+			## ⑨ 自爆的观感（纯表现）：几何出厂即隐藏，登记点见该函数的说明
 			_build_grenadier_blast_fx(visual)
 		"shadow":
 			## 影魔（2026-09-25 第三轮新增，**刺客**；**同日第七轮按用户裁决重做造型**）。
@@ -2909,6 +5045,8 @@ static func _build_fresh(type_id: String, team: int) -> Dictionary:
 			(iris.material_override as StandardMaterial3D).emission_energy_multiplier = 0.55
 			weapon.add_child(iris)
 			visual.add_child(weapon)
+			## 装饰精修（2026-11-03 自本地版移植）：眼睑铆钉 / 虹膜外环 / 赤道金属环 —— 见 `_refine_doom_eye_model()`
+			_refine_doom_eye_model(visual, weapon)
 			var gather := Node3D.new()
 			gather.name = "ChargeGather"
 			gather.visible = false

@@ -31,6 +31,8 @@ var _prewarmed: bool = false
 var _audio: AudioManager = null
 ## 这一场是从存档接着打，而不是新开一局。
 var _loading_save: bool = false
+## 窗口缩放档（见 `scripts/core/window_scale.gd`）。⚠️ 得存成成员变量：`RefCounted` 被回收后信号就断了。
+var _window_scale: WindowScale = null
 
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_WM_CLOSE_REQUEST:
@@ -52,14 +54,42 @@ func _save_match_on_quit() -> void:
 func _ready() -> void:
 	## 暂停菜单点「主菜单」时由暂停菜单发出来（界面层不认识 `main`，只能走总线，见 `07_file_layout.md#5`）。
 	Events.main_menu_requested.connect(_on_main_menu_requested)
+	## ⚠️ **第一件**：窗口缩放档要赶在下面 `UserPrefs.load_video()` 之前装好，
+	## 那样"启动时直接进全屏"那一下的尺寸变化也能被 `size_changed` 接住。
+	_setup_window_scale()
 	## ⚠️ 音频层**先建**：开始界面那一屏也要有 BGM（用户："将其加入每一个界面"）。
 	UserPrefs.load_battle_scenes()
 	UserPrefs.load_video()
+	## ⚠️ **2026-11-03**（用户："游戏界面还是没有全屏"）：帧尾按同一状态**再补一次**（`reapply_video()` 幂等）。
+	## `_ready()` 里那一下有可能赶在窗口真正映射出来之前，个别驱动会吞掉那时的 `window_set_mode()` ⇒
+	## 表现就是"明明设了全屏，启动还是窗口"。补这一发不影响别的：本来就是全屏就原样返回。
+	_reapply_video.call_deferred()
 	UserPrefs.load_input()
 	_setup_audio()
 	UserPrefs.load_audio(_audio)
 	_open_start_screen()
 	_prewarm_unit_models()
+
+## 窗口缩放：把"**不是 16:9**"的窗口（更高 / 更宽两头）都补上（用户："界面还是不能最大化"、
+## "这次必须随着窗口能放大"）。⚠️ 逻辑全在 `scripts/core/window_scale.gd`，这里只负责装到主窗口上；
+## 不变量 I-04 一个字没动（stretch 仍是 `canvas_items` + `expand`、基准仍是 1600×900）。
+## ⚠️ 装好之后它会自己听 `size_changed`，拖动窗口、点最大化、切全屏都不用再管。
+func _setup_window_scale() -> void:
+	_window_scale = WindowScale.new()
+	_window_scale.install(get_window())
+
+## 帧尾补发全屏（见 `_ready()` 里那一段的说明）。包一层是因为**静态方法**再挂 `call_deferred` 读着别扭。
+## ⚠️ 顺带打一行窗口诊断（仅调试构建）：用户报"画面不随窗口变大"时，这一行能直接区分
+## "窗口本身没变大（嵌入式视图 / 驱动吞了模式）"与"窗口大了但画面没跟着"。
+func _reapply_video() -> void:
+	UserPrefs.reapply_video()
+	if OS.is_debug_build():
+		print("[窗口] 模式=%d 尺寸=%s 可用区=%s 屏幕=%s" % [
+			DisplayServer.window_get_mode(),
+			DisplayServer.window_get_size(),
+			DisplayServer.screen_get_usable_rect(),
+			DisplayServer.screen_get_size(),
+		])
 
 ## 建音频层并起 BGM。**只在 `_ready()` 里建一次、之后永不释放**（`_on_main_menu_requested()` 会跳过它）。
 ##

@@ -256,11 +256,21 @@ var _body: MeshInstance3D = null
 ## 投石车的兜/石弹挂点（`unit_factory.gd#BucketPivot`）：每帧反向抵消抛臂角度，保持碗口朝上
 var _siege_bucket: Node3D = null
 ## 弩车"上弦"的挂点（`unit_factory.gd#"ballista"` 分支）：顺序恒为 **[左, 右]**，四个数组一一对应。
-## 只有弩车取到值；其余兵种四个数组都为空（`_apply_bow_draw` 会直接返回）。
+## 弩车（上弦）与两种弓手（拉弦）取到值；其余兵种三个弦数组都为空 ⇒ 相关函数直接返回。
 var _bow_halves: Array[Node3D] = []        ## 两半弦的枢轴（位置就在弓臂梢上）
-var _bow_bars: Array[MeshInstance3D] = []  ## 两半弦的弦杆（拉弦时长度跟着变，见 `_apply_bow_draw`）
-var _bow_limbs: Array[Node3D] = []         ## 两根弓臂的枢轴（绕弓臂根转一点 = 整根弓臂后仰）
+var _bow_bars: Array[MeshInstance3D] = []  ## 两半弦的弦杆（上弦 / 拉弦时长度跟着变）
+var _bow_limbs: Array[Node3D] = []         ## 两根弓臂的枢轴（**只有弩车有**：绕弓臂根转一点 = 整根弓臂后仰）
 var _bow_tips: Array[Vector3] = []         ## 两半弦枢轴的**静止**位置（= 弓臂梢，`BowAssembly` 局部坐标）
+
+## ---- 手臂姿态（2026-11-02 新增）----
+## 用户："给所有士兵做上符合建模的战斗动画，比如射箭时手要拉弓"。
+## 做法：**手**挂在武器 / 盾枢轴下面（工厂负责，武器一挥它就跟着走），
+## **前臂**每帧由 `_update_arm_pose()` 重新摆到「肘 → 当前手」之间 ⇒ 手臂不会再和武器脱节。
+## ⚠️ 纯表现：这里不写任何 `_next_hit_ms` / `_swing_from_ms`，出手节奏一个字节都不动。
+var _forearms: Array[MeshInstance3D] = []
+var _arm_hands: Dictionary = {}          ## side -> Node3D（跟着武器 / 盾走的那只手）
+var _arm_hand_rest: Dictionary = {}      ## side -> Vector3（静止时手的局部坐标，拉弦从它起算）
+var _bow_string: Node3D = null           ## 弓弦的**group 节点**（只有短弓手 / 长弓手有；两半弦是它的子节点）
 ## 弩车的上弦进度（0 = 静止的直弦，1 = 拉满）。只由 `_animate_attack` 推进，纯表现。
 var _bow_draw: float = 0.0
 ## 潜地沙尘的挂点（`unit_factory.gd#_build_burrow_fx()`，只有沙虫有）：潜入地下时显示，示意它的位置。
@@ -643,25 +653,32 @@ func _ready() -> void:
 		_weapon_rest_pos = _weapon.position
 		## 投石车才有这个挂点；其它兵种取到 null，后面按需判空。
 		_siege_bucket = _weapon.get_node_or_null("BucketPivot")
-		## 弩车才有这套上弦挂点（`unit_factory.gd#BowLimb_*` / `#BowStringHalf_*`）；
-		## 其它兵种的弓组件里没有这些节点 ⇒ 两个都取不到就跳过，四个数组留空。
-		for side in ["left", "right"]:
-			var limb := _weapon.get_node_or_null("BowLimb_%s" % side) as Node3D
-			var half := _weapon.get_node_or_null("BowString/BowStringHalf_%s" % side) as Node3D
-			if limb == null or half == null:
+		## 两半弦的挂点（`unit_factory.gd#BowStringHalf_*`）：**弩车**（`left` / `right`，另带弓臂枢轴
+		## `BowLimb_*`）与**两种弓手**（`upper` / `lower`，弓臂不动）共用这三份缓存：
+		##   · 弩车 = 上弦（`_apply_bow_draw`，臂梢每帧按弓臂旋转重算）；
+		##   · 弓手 = 拉弦（`_pose_bow_string_to_hand`，直接用缓存的 `_bow_tips`，弦心追着拉弦手）。
+		for end in ["left", "right", "upper", "lower"]:
+			var half := _weapon.get_node_or_null("BowString/BowStringHalf_%s" % end) as Node3D
+			if half == null:
+				half = _weapon.get_node_or_null("LongbowString/BowStringHalf_%s" % end) as Node3D
+			if half == null:
 				continue
-			var bar := half.get_node_or_null("BowStringBar_%s" % side) as MeshInstance3D
+			var bar := half.get_node_or_null("BowStringBar_%s" % end) as MeshInstance3D
 			if bar == null:
 				continue
-			_bow_limbs.append(limb)
+			var limb := _weapon.get_node_or_null("BowLimb_%s" % end) as Node3D
+			if limb != null:
+				_bow_limbs.append(limb)
 			_bow_halves.append(half)
 			_bow_bars.append(bar)
 			## 工厂把半弦枢轴放在臂梢上，所以此刻的 `position` 就是弦端的静止坐标；
-			## 上弦后这个值会被逐帧改写，必须先缓存下来。
+			## 上弦 / 拉弦后这个值会被逐帧改写，必须先缓存下来。
 			_bow_tips.append(half.position)
 	if _shield != null:
 		_shield_rest = _shield.rotation
 		_shield_rest_pos = _shield.position
+	## 手臂挂点（2026-11-02）：前臂 + 两只手的静止坐标，以及弓弦（只有两种弓手有）。
+	_cache_arm_pose()
 	## 火焰拳的三段特效挂点（2026-09-19 新增）：只有火焰拳有这三个节点，其余兵种取到 null，
 	## `_update_flame_fx()` 会直接返回 ⇒ 零开销。
 	if _weapon != null:
@@ -732,19 +749,31 @@ func _ready() -> void:
 	_build_health_bar()
 	Events.unit_spawned.emit(self)
 
-## 重绘**队伍色锚点件**（节点名以 `TeamAccent` 开头的那几件，目前只有影魔的腰际束带与双眼）。
+## 重绘**队伍色锚点件**（节点名以 `TeamAccent` 开头的那几件：影魔的腰际束带与双眼、
+## 剑盾/骑士的护肩与盾面）。
 ## ⚠️ 存在的理由：别的兵种把队伍色穿在**躯干**上，换边时由受击闪白那一路顺带改写；而影魔的躯干是
 ## 墨色（影子），它的队伍色单独挂在这几个件上 ⇒ **换边必须显式重绘一次**，否则策反后它仍戴着旧队的颜色。
 ## 没有这类件的兵种走一遍空循环（`find_children` 返回空数组）⇒ 零影响。
+## ⚠️ **2026-11-03**：锚点件不一定就是**纯**队伍色 —— 盾面是 `base.lightened(0.20)`（提亮，盾才不至于
+## 和同色的躯干糊成一块）、护肩是 `base.darkened(0.06)`（烤漆钢）。原先这里一律写死不提亮的 `color`，
+## 于是出生时 `_ready()` 那一遍就把建模时的明暗全抹平、换边更是一键全压成同一块纯色。
+## 现在每个件自带一个 meta **`accent_tint`**（相对明度偏移，正数提亮 / 负数压暗），重绘时按它复现：
+## 换队前后**明暗关系不变**，只有色相跟着队伍换。没有 meta 的件（束带、眼睛）默认 0 ⇒ 逐位不变。
 func _repaint_team_accents() -> void:
 	if _visual == null:
 		return
-	var color := GameConfig.team_color(team)
+	var accent := GameConfig.team_color(team)
 	for node in _visual.find_children("TeamAccent*", "MeshInstance3D", true, false):
 		var mesh := node as MeshInstance3D
 		var mat := mesh.material_override as StandardMaterial3D
 		if mat == null:
 			continue
+		var tint := float(mesh.get_meta("accent_tint", 0.0))
+		var color := accent
+		if tint > 0.0:
+			color = accent.lightened(tint)
+		elif tint < 0.0:
+			color = accent.darkened(-tint)
 		mat.albedo_color = color
 		if mat.emission_enabled:
 			mat.emission = color
@@ -2763,6 +2792,8 @@ func _process(delta: float) -> void:
 					var pop := maxf(0.0, 1.0 - k * 3.0)
 					_dust_puffs[i].scale = Vector3.ONE * (0.65 + 0.9 * pop * _dust)
 	_animate_attack()
+	## 手臂姿态（2026-11-02）：必须排在 `_animate_attack()` **之后** —— 它读的是武器刚刚摆好的位置。
+	_update_arm_pose()
 	## 沙虫浮出"震地"特效（非沙虫 / 没在播时是一次空判断，直接返回）
 	_update_burst_fx(Time.get_ticks_msec())
 	## 炎爆的三段特效（非火焰拳直接返回，见 `_update_flame_fx()`）
@@ -2771,6 +2802,91 @@ func _process(delta: float) -> void:
 	_update_beam_fx()
 	_update_laser_beam()
 	_update_ward_ring()
+
+## 缓存手臂姿态用到的节点（只在 `_build()` 里调一次）。
+func _cache_arm_pose() -> void:
+	for node in _visual.find_children("Forearm_*", "MeshInstance3D", true, false):
+		_forearms.append(node as MeshInstance3D)
+	for side in ["left", "right"]:
+		var hand := _visual.find_child("Hand_%s" % side, true, false) as Node3D
+		if hand == null:
+			continue
+		_arm_hands[side] = hand
+		_arm_hand_rest[side] = hand.position
+	if _weapon != null:
+		## 弓弦的 group 节点：短弓手叫 `BowString`、长弓手叫 `LongbowString`（弩车也有 `BowString`，
+		## 但它走 `is_bolt_shooter()` 支，这里的判定只给两种弓手的"拉弦"用）。
+		_bow_string = _weapon.get_node_or_null("BowString") as Node3D
+		if _bow_string == null:
+			_bow_string = _weapon.get_node_or_null("LongbowString") as Node3D
+
+## 弓手拉弦的进度：0 = 松弦，1 = 拉满。前摇期间单调拉满（顶点 = 命中帧），命中后 70 ms 弹回。
+func _bow_draw_amount() -> float:
+	if _bow_string == null or _state != State.ATTACK or _swing_from_ms <= 0:
+		return 0.0
+	var interval := _attack_interval()
+	var windup := interval * GameConfig.windup_ratio(type_id)
+	if _attack_timer < windup:
+		return smoothstep(0.0, 1.0, clampf(_attack_timer / maxf(windup, 0.001), 0.0, 1.0))
+	return 1.0 - smoothstep(0.0, 1.0, clampf((_attack_timer - windup) / 0.07, 0.0, 1.0))
+
+## 每帧摆手臂（2026-11-02）：手已经挂在武器 / 盾枢轴下面（工厂负责），这里只把前臂接回「肘 → 手」。
+## 弓手额外做两件事：**拉弦手后撤** + **两半弦跟着手合拢**（`GameConfig.UNIT_BOW_*`）。
+## ⚠️ 纯表现：不写 `_next_hit_ms` / `_swing_from_ms`，命中时机一格不动（I-13 的绝对时刻照旧）。
+func _update_arm_pose() -> void:
+	if _forearms.is_empty():
+		return
+	var draw := _bow_draw_amount()
+	if _bow_string != null:
+		var draw_hand: Node3D = _arm_hands.get("left", null)
+		if draw_hand != null:
+			var rest: Vector3 = _arm_hand_rest.get("left", Vector3.ZERO)
+			draw_hand.position = rest + Vector3(0.0, 0.0,
+					GameConfig.UNIT_BOW_DRAW_DISTANCE * draw)
+		## 弦心跟着拉弦手走（2026-11-02 用户："拉弓的时候弦不要脱离弓"）。
+		_pose_bow_string_to_hand()
+	for forearm in _forearms:
+		var side := "left" if String(forearm.name).ends_with("left") else "right"
+		var hand: Node3D = _arm_hands.get(side, null)
+		var parent := forearm.get_parent() as Node3D
+		if hand == null or parent == null:
+			continue
+		var elbow: Vector3 = forearm.get_meta("arm_elbow", Vector3.ZERO)
+		var target := parent.to_local(hand.global_position)
+		var reach := elbow.distance_to(target)
+		if reach > GameConfig.UNIT_ARM_REACH_MAX:
+			target = elbow + (target - elbow).normalized() * GameConfig.UNIT_ARM_REACH_MAX
+		UnitFactory.pose_limb(forearm, elbow, target, 0.056)
+
+## 弓手拉弦（2026-11-02 新增，用户："拉弓的时候弦不要脱离弓"）：
+## 两半弦的**外端钉在弓臂梢上**（`_bow_tips` —— 弓手的弓臂不动，臂梢是常量）、
+## **内端在弦心对接**，而弦心就是**拉弦手的当前位置** ⇒ 手拉到哪、弦就收到哪，弦端永远连着弓梢。
+## 弦杆按「弦端 → 弦心」的实长改写（工厂造的是可改长度的 `BoxMesh`，且已按单位复制过网格）。
+## ⚠️ 与弩车的 `_apply_bow_draw` 是同一手法，只差弦心的来源：那边是公式（`BALLISTA_DRAW_*`），这边是手。
+func _pose_bow_string_to_hand() -> void:
+	if _bow_halves.is_empty():
+		return
+	var draw_hand: Node3D = _arm_hands.get("left", null)
+	if draw_hand == null:
+		return
+	var vertex := _weapon.to_local(draw_hand.global_position)
+	for i in _bow_halves.size():
+		var tip: Vector3 = _bow_tips[i]
+		var span := vertex - tip
+		var span_len := maxf(span.length(), 0.01)
+		var half := _bow_halves[i]
+		var bar := _bow_bars[i]
+		half.position = tip
+		## 与弩车半弦同一套"+Z 对上这一段"的朝向（俯仰 `asin` + 偏航 `atan2`）
+		half.rotation = Vector3(-asin(clampf(span.y / span_len, -1.0, 1.0)),
+				atan2(span.x, span.z), 0.0)
+		var bar_mesh := bar.mesh as BoxMesh
+		if bar_mesh == null:
+			continue
+		var bar_size := bar_mesh.size        ## 只改长度，截面（0.024 / 0.022 见方）沿用工厂里那一份
+		bar_size.z = span_len
+		bar_mesh.size = bar_size
+		bar.position.z = span_len * 0.5
 
 ## 攻击动作：前摇抬起、命中帧落下（纯表现，不影响判定）
 func _animate_attack() -> void:
@@ -2830,9 +2946,101 @@ func _animate_attack() -> void:
 	#   突刺型（长矛）：动**位置**——矛杆沿自身轴（本体 −Z）向前推出去再收回来；
 	#   挥扇型（扇子兵）：动**旋转**，但**只绕本体 X 轴**——扇面水平铺开，绕水平轴就是**上下扇动**
 	#     （扇柄在身侧、扇面朝前，绕 X 转 = 扇面整体往上抬 / 往下压，不是左右横扫）；
-	#   挥砍型（剑盾 / 骑士 / 狂战士）：动**旋转**，X（劈）+ Z（横扫）两轴一起给；
-	#   上弦型（弩车，2026-09-19）：不走 `swing`，改由 `draw` 驱动弓臂与弦，见下面那一支。
-	if is_thrusting():
+	#   挥砍型（骑士 / 狂战士）：动**旋转**，X（劈）+ Z（横扫）两轴一起给；
+	#   过顶劈砍型（剑盾兵，2026-11-03 单独成支）：旋转 + **握点位置**一起动，见下面那一支；
+	#   上弦型（弩车，2026-09-19）：不走 `swing`，改由 `draw` 驱动弓臂与弦，见下面那一支；
+	#   拉弓型（短弓手 / 长弓手，2026-11-02）：同样由 `draw` 驱动，但**不转、只把整把弓抬到肩高**。
+	if type_id == "musket":
+		## 火枪（2026-11-02）：**不捅、不挥**——命中帧枪身沿本体 **+Z** 退一截、枪口上跳，随后弹回。
+		## ⚠️ 必须排在 `is_thrusting()` 之前：手滑枪的 PROFILE 带 `thrust`，不拦下来它会把枪往前推。
+		_weapon.position = _weapon_rest_pos + Vector3(0.0, 0.0,
+				GameConfig.UNIT_MUSKET_RECOIL_DISTANCE * swing)
+		_weapon.rotation = _weapon_rest + Vector3(-GameConfig.UNIT_MUSKET_RECOIL_TILT * swing, 0.0, 0.0)
+	elif type_id == "sword":
+		## 剑盾兵（2026-11-03 用户："建模和动画像已发售的游戏，更自然、更美观"）。
+		## 旧版只转 `Sword`、**握点（手）一动不动** ⇒ 剑在原地绕圈、手臂像焊在腰上。
+		## 现在**手也跟着走**（手挂在 `Sword` 下，前臂每帧由 `_update_arm_pose()` 接到「肘 → 手」），
+		## 并且把一次挥砍拆成三段：
+		##   ① **蓄力**（前摇前 `UNIT_SWORD_COCK_END`）：手抬到肩上、剑越过竖直往后仰；
+		##   ② **下劈**（其后到命中帧）：手往前下方压、剑从竖直砸到身前；
+		##   ③ **跟随**（命中后 `UNIT_SWORD_RECOVER` 那段收招）：继续过冲一点再落回静止。
+		## ⚠️ 命中帧仍是**动画顶点**：`chop` 在 `t = 1` 处正好 = 1（与 `_tick_attack()` 排的命中帧同格）。
+		var cocked := 0.0        ## 蓄力程度 0~1（1 = 剑扛到肩后）
+		var chop := 0.0          ## 下劈程度 0~1（1 = 命中帧劈到位）
+		if _attack_timer < windup:
+			var cock_end := maxf(GameConfig.UNIT_SWORD_COCK_END, 0.01)
+			chop = smoothstep(0.0, 1.0, clampf((t - cock_end) / (1.0 - cock_end), 0.0, 1.0))
+			## 蓄力乘上 `(1 - chop)`：下劈一开始它就往回收 ⇒ 命中帧那一刻两个量连续交接，不会跳帧
+			cocked = smoothstep(0.0, 1.0, clampf(t / cock_end, 0.0, 1.0)) * (1.0 - chop)
+		else:
+			var settle := clampf((_attack_timer - windup)
+					/ maxf(settle_time * GameConfig.UNIT_SWORD_RECOVER, 0.001), 0.0, 1.0)
+			chop = 1.0 - smoothstep(0.0, 1.0, settle)
+		_weapon.position = _weapon_rest_pos + Vector3(0.0,
+				GameConfig.UNIT_SWORD_COCK_LIFT * cocked - GameConfig.UNIT_SWORD_CHOP_DROP * chop,
+				GameConfig.UNIT_SWORD_COCK_BACK * cocked - GameConfig.UNIT_SWORD_CHOP_REACH * chop)
+		_weapon.rotation = _weapon_rest + Vector3(
+				GameConfig.UNIT_SWORD_COCK_TILT * cocked - GameConfig.UNIT_SWORD_CHOP_TILT * chop,
+				0.0,
+				GameConfig.UNIT_SWORD_CHOP_SIDE * chop)
+	elif type_id == "knight":
+		## 骑士（2026-11-03）：与剑盾兵**同一套三段式**（蓄力 → 下劈 → 跟随），
+		## 只是幅度按"更重的兵种"放大（常量见 `GameConfig.UNIT_KNIGHT_*`）。
+		## ⚠️ 为什么不能沿用下面那条通用挥砍支：它只转 `Sword`、**握点一动不动** ——
+		##    骑士的剑比剑盾兵重一档，剑在原地绕圈会读成"拿着一根指挥棒"，手腕根本没有参与。
+		##    （剑盾兵 2026-11-03 就是先踩了这个坑才单独成支的。）
+		## ⚠️ 手挂在 `Sword` 下 ⇒ 握点一动，拳头跟着走；前臂由 `_update_arm_pose()` 每帧接回「肘 → 手」。
+		var knight_cocked := 0.0     ## 蓄力程度 0~1（1 = 剑扛到肩后）
+		var knight_chop := 0.0       ## 下劈程度 0~1（1 = 命中帧劈到位）
+		if _attack_timer < windup:
+			var knight_cock_end := maxf(GameConfig.UNIT_KNIGHT_COCK_END, 0.01)
+			knight_chop = smoothstep(0.0, 1.0,
+					clampf((t - knight_cock_end) / (1.0 - knight_cock_end), 0.0, 1.0))
+			## 蓄力乘上 `(1 − chop)`：下劈一开始它就往回收 ⇒ 命中帧那一刻两个量连续交接，不跳帧。
+			knight_cocked = smoothstep(0.0, 1.0,
+					clampf(t / knight_cock_end, 0.0, 1.0)) * (1.0 - knight_chop)
+		else:
+			var knight_settle := clampf((_attack_timer - windup)
+					/ maxf(settle_time * GameConfig.UNIT_KNIGHT_RECOVER, 0.001), 0.0, 1.0)
+			knight_chop = 1.0 - smoothstep(0.0, 1.0, knight_settle)
+		_weapon.position = _weapon_rest_pos + Vector3(0.0,
+				GameConfig.UNIT_KNIGHT_COCK_LIFT * knight_cocked
+						- GameConfig.UNIT_KNIGHT_CHOP_DROP * knight_chop,
+				GameConfig.UNIT_KNIGHT_COCK_BACK * knight_cocked
+						- GameConfig.UNIT_KNIGHT_CHOP_REACH * knight_chop)
+		_weapon.rotation = _weapon_rest + Vector3(
+				GameConfig.UNIT_KNIGHT_COCK_TILT * knight_cocked
+						- GameConfig.UNIT_KNIGHT_CHOP_TILT * knight_chop,
+				0.0,
+				GameConfig.UNIT_KNIGHT_CHOP_SIDE * knight_chop)
+	elif type_id == "berserker":
+		## 狂战士（2026-11-03）：两把斧同挂在 `_weapon` 下 ⇒ 与骑士**同一套三段式**
+		##（蓄力 → 下劈 → 跟随，命中帧仍是动画顶点），只是幅度更大、蓄力更短（"抡"而不是"劈"）。
+		## ⚠️ 不沿用通用挥砍支：那条只转 `rotation.x`，双斧会像一根棍子原地翻转；
+		##    这里让握点同时**抬起 → 前送 → 下压**，两只手（`Hand_*` 挂在 `_weapon` 下）跟着走。
+		var axe_cocked := 0.0
+		var axe_chop := 0.0
+		if _attack_timer < windup:
+			var axe_cock_end := maxf(GameConfig.UNIT_BERSERKER_COCK_END, 0.01)
+			axe_chop = smoothstep(0.0, 1.0,
+					clampf((t - axe_cock_end) / (1.0 - axe_cock_end), 0.0, 1.0))
+			axe_cocked = smoothstep(0.0, 1.0,
+					clampf(t / axe_cock_end, 0.0, 1.0)) * (1.0 - axe_chop)
+		else:
+			var axe_settle := clampf((_attack_timer - windup)
+					/ maxf(settle_time * GameConfig.UNIT_BERSERKER_RECOVER, 0.001), 0.0, 1.0)
+			axe_chop = 1.0 - smoothstep(0.0, 1.0, axe_settle)
+		_weapon.position = _weapon_rest_pos + Vector3(0.0,
+				GameConfig.UNIT_BERSERKER_COCK_LIFT * axe_cocked
+						- GameConfig.UNIT_BERSERKER_CHOP_DROP * axe_chop,
+				GameConfig.UNIT_BERSERKER_COCK_BACK * axe_cocked
+						- GameConfig.UNIT_BERSERKER_CHOP_REACH * axe_chop)
+		_weapon.rotation = _weapon_rest + Vector3(
+				GameConfig.UNIT_BERSERKER_COCK_TILT * axe_cocked
+						- GameConfig.UNIT_BERSERKER_CHOP_TILT * axe_chop,
+				0.0,
+				GameConfig.UNIT_BERSERKER_CHOP_SIDE * axe_chop)
+	elif is_thrusting():
 		_weapon.position = _weapon_rest_pos + Vector3(0.0, 0.0, -swing * GameConfig.UNIT_THRUST_DISTANCE)
 	elif is_burrower():
 		## 沙虫（2026-09-19）：出手是**下颚前咬** —— 与长矛同一手法（动位置、不动旋转），但幅度更大，
@@ -2876,6 +3084,18 @@ func _animate_attack() -> void:
 		_bow_draw = draw
 		_apply_bow_draw(draw)
 		_weapon.rotation = _weapon_rest + Vector3(draw * BALLISTA_TILT_ANGLE, 0.0, 0.0)
+	elif _bow_string != null:
+		## 拉弓型（短弓手 / 长弓手，2026-11-02 用户："把弓抬到水平，做得真实一点"）：
+		## **不转、只平移** —— 整把弓抬到肩高（`UNIT_BOW_RAISE_HEIGHT`）、往前送一截
+		## （`UNIT_BOW_EXTEND_DISTANCE`），命中帧 = 抬满 + 拉满。
+		## ⚠️ 为什么不沿用下面 `is_ranged()` 那条"远程小幅抬"：它绕的是**武器原点（= 脚下）**，
+		##    −0.35 × 1.15 = −0.40 rad 会让弓梢在命中帧往前栽 ≈0.7 m，读起来是"弓倒了"而不是"在瞄"。
+		## ⚠️ 拉弦手与两半弦都挂在 `_weapon` 下 ⇒ 抬弓时手和弦一起走，前臂再由 `_update_arm_pose()` 接回去。
+		var bow_draw := _bow_draw_amount()
+		_weapon.rotation = _weapon_rest
+		_weapon.position = _weapon_rest_pos + Vector3(0.0,
+				GameConfig.UNIT_BOW_RAISE_HEIGHT * bow_draw,
+				-GameConfig.UNIT_BOW_EXTEND_DISTANCE * bow_draw)
 	elif is_ranged():
 		_weapon.rotation = _weapon_rest + Vector3(-swing * 0.35, 0.0, 0.0)
 	else:
@@ -2899,7 +3119,8 @@ func _animate_attack() -> void:
 ##   两半弦是**刚性**的，所以内端退开时按"枢轴 → 弦心"的实长改写弦杆长度（最多长 23% 左右，
 ##   肉眼看不出来），换来的是**内端永远落在中线上**、弦不会在中间撕成两截。
 func _apply_bow_draw(draw: float) -> void:
-	if _bow_halves.is_empty():
+	## 只有弩车有弓臂枢轴（`BowLimb_*`）；两种弓手的弓臂不动，走 `_pose_bow_string_to_hand()`。
+	if _bow_halves.is_empty() or _bow_limbs.is_empty():
 		return
 	var flex := draw * BALLISTA_LIMB_FLEX_ANGLE
 	var dip := draw * BALLISTA_LIMB_DIP_ANGLE
@@ -6416,6 +6637,12 @@ func _die() -> void:
 	## 弩车：阵亡时把弦松开——否则尸体会僵在"拉满"的姿态上（`_animate_attack` 死后不再推进）。
 	_bow_draw = 0.0
 	_apply_bow_draw(0.0)
+	## 两种弓手同理（2026-11-02）：先把拉弦手放回静止位，两半弦自然跟着松回去。
+	if _bow_string != null:
+		var rest_hand: Node3D = _arm_hands.get("left", null)
+		if rest_hand != null:
+			rest_hand.position = _arm_hand_rest.get("left", Vector3.ZERO)
+		_pose_bow_string_to_hand()
 	## 表现：阵亡时把炎爆的三段特效一起收掉（尸体不该继续冒火，火池也没人再驱动）
 	_clear_flame_fx()
 	## "穿队友"的待还原请求一并作废：`_die()` 稍后会把掩码改成"只留世界层"，己方层已经不在里面了

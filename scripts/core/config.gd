@@ -670,6 +670,21 @@ const UNIT_ROTATION_SPEED := 9.0       ## 转向角速度 rad/s
 const UNIT_HIT_FLASH_MS := 140         ## 受击闪白时长 ms
 const UNIT_WINDUP_RATIO := 0.30        ## 攻击前摇占攻击间隔的比例（默认值，可被 PROFILE 的 windup_ratio 覆盖）
 const UNIT_THRUST_DISTANCE := 0.55     ## 突刺型武器（长矛）出手时沿武器轴向前推出的距离 m
+## 手臂姿态（2026-11-02 新增，用户："给所有士兵做上符合建模的战斗动画，比如射箭时手要拉弓"）。
+## 全部只喂 `Unit3D._update_arm_pose()`：它每帧把**前臂**重新摆到「肘 → 当前手」之间，
+## 于是武器挥到哪、手就在哪，手臂不再和武器脱节（判据：不改任何出手节奏，纯表现）。
+const UNIT_ARM_FOLLOW := 0.55          ## 手跟随武器的程度（1 = 完全跟随；留一点余量，动作不至于发僵）
+const UNIT_ARM_REACH_MAX := 0.62       ## 肩到手的最大伸直距离 m（超过就夹住，免得前臂被拉成面条）
+const UNIT_BOW_DRAW_DISTANCE := 0.26   ## 弓手拉弦：拉弦手沿本体 **+Z**（身后）后撤的距离 m
+## 拉弓时的整弓姿态（2026-11-02 新增，用户："把弓抬到水平，做得真实一点"）。
+## 真实的拉弓 = **持弓臂前伸、弓身竖直**；原先弓手走 `is_ranged()` 那条通用支
+## （`rotation.x = −0.35 × swing`，绕脚下原点转 ⇒ 弓梢在命中帧往前栽 0.4 rad），读起来像"弓倒了"。
+## 现在拉弓期间**不转、只平移**：整把弓抬到肩高、往前送一截，命中帧正好抬满。
+## ⚠️ 纯表现：不动 `_next_hit_ms` / `_swing_from_ms`，出手节奏一格不动（I-13）。
+const UNIT_BOW_RAISE_HEIGHT := 0.22    ## 拉弓时整把弓抬高的距离 m（弓从胸口抬到肩高）
+const UNIT_BOW_EXTEND_DISTANCE := 0.12 ## 拉弓时整把弓沿本体 **−Z**（身前）送出去的距离 m
+const UNIT_MUSKET_RECOIL_DISTANCE := 0.10  ## 火枪后坐：枪身沿本体 **+Z** 后退的距离 m
+const UNIT_MUSKET_RECOIL_TILT := 0.14      ## 火枪后坐：枪口上跳角 rad
 const UNIT_CONTACT_RATIO := 1.18       ## 近战命中宽容系数（击退会把目标推出射程）
 const UNIT_CORPSE_FADE_MS := 700       ## 阵亡倒地演出时长 ms
 const UNIT_STOP_DECELERATION := 30.0   ## 停下时的减速度 m/s²
@@ -678,6 +693,60 @@ const UNIT_BOB_AMPLITUDE := 0.03       ## 待机浮动幅度 m
 ## 平时盾面朝前、挡在身前；出手窗口内转到身侧——玩家要能一眼看出"这会儿挡不住箭"。
 const UNIT_SHIELD_SWING := Vector3(0.0, 1.45, 0.0)       ## 让位时的额外旋转 rad（盾面转向身侧）
 const UNIT_SHIELD_OFFSET := Vector3(-0.22, -0.10, 0.26)  ## 让位时的额外位移 m（离开身前、贴到身侧）
+## 剑盾兵的过顶劈砍（2026-11-03 新增，用户："建模和动画像已发售的游戏，更自然、更美观"）。
+## 旧版 `_animate_attack()` 的挥砍支**只转 `Sword`、握点(手)一动不动** ⇒ 手臂像焊在腰上、剑在原地绕圈。
+## 现在把手也一起抬放（前臂由 `_update_arm_pose()` 自动接回「肘 → 手」），并拆成三段：
+##   ① 蓄力 → ② 下劈（**命中帧正好劈到位**）→ ③ 跟随过冲后回位。
+## ⚠️ 纯表现：`_next_hit_ms` / `_swing_from_ms` 一格不动，命中帧仍是动画顶点（`04_physics.md#3.5` 的硬性质）。
+const UNIT_SWORD_COCK_TILT := 0.26     ## 蓄力：剑越过竖直再往后仰的角度 rad（扛到肩后）
+const UNIT_SWORD_COCK_LIFT := 0.20     ## 蓄力：握点抬高的距离 m（手举到肩上）
+## ⚠️ **2026-11-03：0.10 → 0**（用户："剑穿了肩甲的膜"）。护肩是个**球壳**
+##（球心 (±0.30, 1.35, 0)、半径 0.2185 / 0.1045 / 0.19，见 `unit_factory.gd#_refine_sword_armor()`），
+## 而握点在正下方 0.30 m 处 ⇒ **剑身只要在护肩那个高度上落进 z ∈ ±0.19 就会从壳里穿出来**。
+## 原来的"往后收 0.10 m"正好把剑身拖回壳里。现在蓄力**只抬不后收**（手抬到肩高、剑越过竖直后仰 15°），
+## 观感仍是"蓄势待发"，但剑身整段留在护肩前面。
+const UNIT_SWORD_COCK_BACK := 0.0      ## 蓄力：握点往身后（+Z）收的距离 m
+const UNIT_SWORD_CHOP_TILT := 1.62     ## 下劈：从竖直往前压的角度 rad（≈93° ⇒ 命中帧剑尖在身前略朝下，带跟随感）
+## ⚠️ **2026-11-03：0.30 → 0**（用户："砍下去也要刀刃朝前"）。剑身的菱形截面已经把**刃口转到朝前**
+##（见 `unit_factory.gd#_sword_blade_mesh()`）⇒ 这一格是绕**剑身长轴**的滚转，非零值会把刃口拧出下劈平面，
+## 命中帧变成"斜着削"。取 0 ⇒ 刃口全程留在这个平面里、正对劈下去的方向。
+const UNIT_SWORD_CHOP_SIDE := 0.0      ## 下劈：绕 Z 的横扫分量 rad（0 = 纯上下劈；非零 = 刃口拧出劈砍平面）
+const UNIT_SWORD_CHOP_REACH := 0.14    ## 下劈：握点往前（−Z）送的距离 m
+const UNIT_SWORD_CHOP_DROP := 0.05     ## 下劈：握点往下压的距离 m
+const UNIT_SWORD_COCK_END := 0.34      ## 前摇里"蓄力"占的比例，之后才开始下劈
+const UNIT_SWORD_RECOVER := 0.55       ## 收招里"剑落回静止"占的比例（剩下的时间保持静止等下一起手）
+## 骑士的大剑过顶劈砍（2026-11-03，用户："模仿剑盾兵把剩下的角色的建模和战斗动画都更新一下"）。
+## 与 `UNIT_SWORD_*` **同构**（同样拆成 蓄力 → 下劈 → 跟随 三段、命中帧仍是动画顶点），
+## 只把幅度按"更重的兵种"放大：手抬得更高、剑后仰更多、砸下去的角度更陡、送出去更远。
+## ⚠️ `UNIT_KNIGHT_COCK_BACK` 仍必须是 **0**：骑士的护肩同样是球壳（球心 (±0.35, 1.37, 0)、
+## 半径 0.2415 / 0.1218 / 0.21），而剑身宽轴半宽 = 0.045 × 1.30 = **0.0585**
+## ⇒ 剑身在护肩那一层要让开 |z| ≥ 0.21 + 0.0585 = **0.2685**；握点已经写在 z = −0.32，
+## 蓄力时再往后收就把剑身拖回壳里（剑盾兵 2026-11-03 踩过同一个坑，用户："剑穿了肩甲的膜"）。
+## ⚠️ 纯表现：`_next_hit_ms` / `_swing_from_ms` 一格不动，出手节奏与判定完全不受影响。
+const UNIT_KNIGHT_COCK_TILT := 0.34    ## 蓄力：剑越过竖直再往后仰的角度 rad（扛到肩后，比剑盾兵多 0.08）
+const UNIT_KNIGHT_COCK_LIFT := 0.26    ## 蓄力：握点抬高的距离 m（手举到肩高，比剑盾兵多 0.06）
+const UNIT_KNIGHT_COCK_BACK := 0.0     ## 蓄力：握点往身后（+Z）收的距离 m（必须 0，理由见上）
+const UNIT_KNIGHT_CHOP_TILT := 1.80    ## 下劈：从竖直往前压的角度 rad（≈103° ⇒ 命中帧剑尖略朝下，比剑盾兵更陡）
+const UNIT_KNIGHT_CHOP_SIDE := 0.0     ## 下劈：绕 Z 的横扫分量 rad（0 = 刃口留在劈砍平面里，同剑盾兵）
+const UNIT_KNIGHT_CHOP_REACH := 0.18   ## 下劈：握点往前（−Z）送的距离 m（大剑吃进得更深）
+const UNIT_KNIGHT_CHOP_DROP := 0.06    ## 下劈：握点往下压的距离 m
+const UNIT_KNIGHT_COCK_END := 0.38     ## 前摇里"蓄力"占的比例（比剑盾兵晚 0.04 ⇒ 蓄势更久）
+const UNIT_KNIGHT_RECOVER := 0.55      ## 收招里"剑落回静止"占的比例（与大剑重量相称，不再拖长）
+## 狂战士的双斧过顶劈砍（2026-11-03，用户："把剩下的角色都按照剑盾兵这样来更新…战斗动画"）。
+## 与 `UNIT_SWORD_*` / `UNIT_KNIGHT_*` **同一套三段式**（蓄力 → 下劈 → 跟随，命中帧仍是动画顶点），
+## 区别只在"人设"：两把斧同握在一个 `Axes` 节点上 ⇒ 抡起来更野、收得更急。
+## ⚠️ `UNIT_BERSERKER_CHOP_SIDE` 是三个劈砍里**唯一非 0**的：双斧是左右对称的两把，
+##    绕 Z 给一点点横扫分量（0.10 rad）才读得出"两把一起抡"，单轴下劈会像一把斧头劈两遍。
+## ⚠️ 纯表现：`_next_hit_ms` / `_swing_from_ms` 一格不动。
+const UNIT_BERSERKER_COCK_TILT := 0.40   ## 蓄力：斧柄越过竖直再往后仰 rad（比骑士更夸张）
+const UNIT_BERSERKER_COCK_LIFT := 0.20   ## 蓄力：握点抬高的距离 m
+const UNIT_BERSERKER_COCK_BACK := 0.06   ## 蓄力：握点往身后（+Z）收的距离 m（斧头在 z −0.27，收 6 cm 仍在前方）
+const UNIT_BERSERKER_CHOP_TILT := 1.90   ## 下劈：从竖直往前压的角度 rad（≈109°，比骑士更狠）
+const UNIT_BERSERKER_CHOP_SIDE := 0.10   ## 下劈：绕 Z 的横扫分量 rad（双斧的"剪刀感"，见上）
+const UNIT_BERSERKER_CHOP_REACH := 0.22  ## 下劈：握点往前（−Z）送的距离 m
+const UNIT_BERSERKER_CHOP_DROP := 0.10   ## 下劈：握点往下压的距离 m
+const UNIT_BERSERKER_COCK_END := 0.30    ## 前摇里"蓄力"占的比例（比剑盾兵还早 ⇒ 抡得快）
+const UNIT_BERSERKER_RECOVER := 0.50     ## 收招里"斧落回静止"占的比例
 ## ---- 卡住自救 / 横向绕行（2026-09-26 用户："兵种会在投石车 / 弩车和召唤石柱后面左右摇摆"）----
 ## ⚠️ 这四支本来以**字面量**散在 `unit3d.gd#_start_sidestep()` 里（0.26 s / 每米半径 420 ms / 阈值 0.5 m）；
 ## 按不变量 I-15"可调参数全部住 `GameConfig`"搬进来，顺手把"时长按半径拍"换成"按自己的移速算"。

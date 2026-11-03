@@ -77,6 +77,9 @@ func open() -> void:
 	if audio != null:
 		_snapshot_music_db = audio.music_db()
 		_snapshot_sfx_db = audio.sfx_db()
+	## ⚠️ **2026-11-03**：窗口模式 / 按键的**快照与音频层无关**，原来一并塞在上面那个 `if audio != null` 里 ——
+	## 音频层一旦找不到，`_snapshot_window_mode` 就停在默认的「窗口化」，
+	## 于是点「退出」时 `cancel()` 会把**正在全屏**的窗口按回窗口化（用户："游戏界面还是没有全屏"）。
 	_snapshot_window_mode = DisplayServer.window_get_mode()
 	_snapshot_bindings = InputBindings.snapshot()
 	_applying = true

@@ -9688,3 +9688,41 @@
   2. 战斗中用鼠标点它**点不动**是预期的（光标被锁）；按住 `Alt` 之后应当点得到。
   3. 设置界面「按键」里正在等新键时按 `F`，倍速**不**应跟着切（那一下被设置界面自己吃掉）。
 
+## 2026-11-02 / 11-03 · 人形建模整备、战斗动画、窗口自适应与全屏、装饰精修移植
+
+- **状态**：生效
+- **背景**：两天连发四组反馈。建模组："调整一下人物的身材" → "把剩下的兵种的建模都参考剑盾兵的建模改进一下" → "给所有士兵做上符合建模的战斗动画，比如射箭时手要拉弓" → "建模和动画像已发售的游戏，更自然、更美观" → "拿着剑要刀刃朝前，砍下去也要刀刃朝前" → "剑穿了肩甲的膜" → "手要握着剑柄而不是连接处" → "模仿剑盾兵把剩下的角色的建模和战斗动画都更新一下"。界面组："这次必须随着窗口能放大"、"游戏界面还是没有全屏"（两轮）。装饰组：把长弓手 / 扇子兵 / 火枪兵 / 武士大师 / 湮灭之瞳身上的装饰恢复（参照本地版；⚠️ 目标项目是 `-main`，两边 `SILHOUETTE` 不同，坐标必须重算、不能照抄）。
+- **决策**：
+  1. **身材（11-02）**：人形躯干半径整体收窄约 20%，高度一个不动（`CapsuleMesh.height` 含两端半球 ⇒ 头顶 / 胯底不跑）；`SILHOUETTE` 与剑盾兵躯干"第二份尺寸"两处必须同数（本次撞过一次）；贴面件（护肩 / 胸甲 / 腰带 / 腰甲 / 胸带）连带内挪。
+  2. **手臂套装（11-02）**：`UnitFactory._add_arms()` 是 `_make_sword_arms()` 的数据版 —— 每个兵种只报三段坐标；**手挂在武器 / 盾枢轴下面**（武器一挥手跟着走），前臂每帧由 `Unit3D._update_arm_pose()` 重新摆到「肘 → 当前手」；"手不穿模"唯一判据 = 离躯干轴线的水平距离大于该高度处的躯干截面半径；骑乘兵种传 `Rider` 当父节点。
+  3. **动画支（11-02）**：弓手**拉弦**（`UNIT_BOW_DRAW_DISTANCE`，弦心 = 拉弦手当前位置，两半弦外端钉在弓梢、内端跟手合拢，`_pose_bow_string_to_hand()`）；**拉弓型**（短弓手 / 长弓手：不转、整把弓抬到肩高 + 前送，`UNIT_BOW_RAISE_HEIGHT` / `UNIT_BOW_EXTEND_DISTANCE`，取代"绕脚下原点转"的通用远程支）；**火枪后坐**（`UNIT_MUSKET_RECOIL_*`：命中帧枪身后退 + 枪口上跳，拦在 `is_thrusting()` 之前）。
+  4. **五官（11-03）**：`UnitFactory._add_humanoid_eyes()` 给人形兵种统一补一对眼球，眼位由头球实测半径反解、不写死 z；已经自己做五官的五个兵种（剑盾兵 / 长矛兵 / 短弓手 / 骑士 / 火焰拳）列进 `FACE_REFINED_TYPES` 由它跳过。
+  5. **剑系（11-03）**：**刃口朝向由网格负责** —— `_sword_blade_mesh()` 菱形截面转 90°（宽轴 → 世界 Z = 刃口朝前后，正面只剩 1.6 cm 刃线）；**握点让开护肩球壳**（球心 (±0.30, 1.35, 0)、半径 0.2185 / 0.1045 / 0.19）并**落到剑柄**（拳心取 `SWORD_GRIP_OFFSET`、整剑同量抬高，拳头世界高度不动）；`UNIT_SWORD_COCK_BACK` 0.10 → 0、`UNIT_SWORD_CHOP_TILT` 0.30 → 0。
+  6. **过顶劈砍三段式（11-03）**：剑盾兵单独成支（旋转 + **握点位置**一起动，拆蓄力 → 下劈 → 跟随，命中帧仍是动画顶点）；骑士 / 狂战士同构放大（常量族 `UNIT_KNIGHT_*` / `UNIT_BERSERKER_*`）。全部纯表现 —— `_next_hit_ms` / `_swing_from_ms` 一格不动。
+  7. **队伍色口径（11-03）**：队伍色件一律 **`TeamAccent` 前缀 + `accent_tint` meta**（相对明度偏移）；`Unit3D._repaint_team_accents()` 重绘时按 meta 复现明暗（盾面提亮 0.20、护肩烤漆钢压暗 0.06），否则出生那遍重绘就把建模时的明暗抹平、换边一键压成纯色。
+  8. **窗口自适应（11-03）**：两个方向都补缩放 —— 变高 ⇒ 逻辑宽 ≥ 基准 75%；超宽（21:9）按宽比补 ⇒ 逻辑高 ≥ 基准 90%（`LOGICAL_MIN_HEIGHT_RATIO`）。"超宽只多看见横向"的旧口径经用户同意废止。
+  9. **全屏（11-03）**：默认**开**（`PREFS_VERSION` v2，老文件里 `fullscreen` 一格不再采信）；进全屏**只切模式**（删掉紧跟的 `window_set_size` / `window_set_position` 两行）；编辑器"游戏视图"嵌入式跑时模式没切过去就退"最大化 + 撑满可用区域"；`main.gd` 启动帧尾 `call_deferred` 再补一次（幂等）；设置界面把窗口模式 / 按键的快照挪出 `if audio != null`。
+  10. **装饰精修移植（11-03）**：价格 2 / boss 五兵种（长弓手 / 扇子兵 / 火枪兵 / 武士大师 / 湮灭之瞳）装饰恢复 —— `UnitFactory` 五个 `_refine_*_model()` + `_band()`，插在各建模分支 `_add_arms()` 之后；坐标按 `-main` 骨架（长弓 0.22 / 扇 0.28 / 火枪 0.27 / 武士 0.40）重算；只加纯视觉子件、不动 `weapon` 挂点的 position / rotation（出手动画转轴）；金属件走 `_polish_metal_finish()`；**这五个函数不挂 `_fine_detail()` 的 48 m 距离裁剪**（装饰要一直可见）；队伍色件沿用 `TeamAccent` 前缀（换边由 `_repaint_team_accents()` 重绘）。
+- **理由**：
+  - 手不挂到武器下面，武器一挥手臂就脱节；"前臂每帧接到「肘 → 手」"是唯一不用逐帧写手臂坐标的做法。
+  - 刃口朝向必须长在网格上：出手动画只绕世界 X 往前压，动画里补滚转会在命中帧把刃口拧出劈砍平面（"斜着削"）。
+  - 护肩是球壳，剑身只要在那个高度落进 z ∈ ±0.19 就会穿膜 ⇒ 蓄力后收与握点后收都得归零，而不是去改动画。
+  - 重绘不认明暗偏移，出生第一遍就把烤漆钢 / 提亮盾抹成纯色 ⇒ 队伍色件必须自带 `accent_tint`。
+  - 装饰坐标照抄本地版必悬空或穿模 —— 两边同高度躯干截面差到 0.06~0.10 m。
+- **被否方案**：
+  - **照抄本地版的装饰坐标** —— `-main` 的 `SILHOUETTE` 不同（长弓 0.22 / 扇 0.28 / 火枪 0.27 / 武士 0.40），全部重算。
+  - **骑士 / 狂战士沿用通用挥砍支** —— 它只转 `Sword`、握点一动不动，大剑读成"指挥棒"（剑盾兵先踩过同一个坑）。
+  - **保留蓄力握点后收 0.10** —— 又把剑身拖回护肩壳里，穿膜复现。
+  - **全屏切完接着按普通窗口再摆一遍尺寸与位置** —— 有的驱动就此把全屏顶回窗口化（用户两轮报"还是没有全屏"的真因）。
+  - **给五个装饰精修函数挂 `_fine_detail()` 远裁** —— 装饰是辨识度的一部分，不该 48 m 外整个消失。
+- **影响面**：代码落在 `scripts/units/unit_factory.gd`（`SILHOUETTE` 收窄、`_add_arms()`、`FACE_REFINED_TYPES` + `_add_humanoid_eyes()`、骑士 / 狂战士精修、刃口 / 握点、装饰精修 5 函数 + `_band()`）、`scripts/units/unit3d.gd`（`_cache_arm_pose()` / `_update_arm_pose()` / `_pose_bow_string_to_hand()`、拉弓型 / 火枪后坐 / 三段式劈砍支、`_repaint_team_accents()` 认 `accent_tint`）、`scripts/core/config.gd`（新增 `UNIT_BOW_DRAW_DISTANCE` / `UNIT_BOW_RAISE_HEIGHT` / `UNIT_BOW_EXTEND_DISTANCE` / `UNIT_MUSKET_RECOIL_DISTANCE` / `UNIT_MUSKET_RECOIL_TILT` / `UNIT_KNIGHT_*` 9 个 / `UNIT_BERSERKER_*` 9 个；改值 `UNIT_SWORD_COCK_BACK` 0.10 → 0、`UNIT_SWORD_CHOP_TILT` 0.30 → 0）、`scripts/core/window_scale.gd`（双向补缩放）、`scripts/core/user_prefs.gd`（全屏默认开、v2、删窗口重摆、嵌入式兜底）、`scripts/ui/settings_screen.gd`（快照解耦音频层）、`scripts/game/main.gd`（启动帧尾补切全屏）。**新文件 0、新信号 0。**
+  ⚠️ **与最初规划的偏差**：本轮会话的规划只有"装饰精修移植"一项（`unit_factory.gd` 一个文件）；两天实际改动横跨 **7 个文件、三组需求**（建模动画 / 界面窗口 / 装饰），其中窗口自适应与全屏修复**完全不在装饰规划内**，`config.gd` 的新常量也远超装饰所需。
+  bible 侧：`00_world.md` §4.4 建模补记、`_index.md` 术语表补 4 行、本条目。`08_naming.md` 本次只做核对、未追加审计段（无冲突，见下）。
+  ⚠️ **命名核对（对照 `08_naming.md`）**：新函数（`_add_arms` / `_update_arm_pose` / `_pose_bow_string_to_hand` / `_cache_arm_pose` / `_add_humanoid_eyes` / `_refine_longbow_model` / `_refine_fan_model` / `_refine_musket_model` / `_refine_master_model` / `_refine_doom_eye_model` / `_band` 等）全部 `_` + snake_case ✓；新节点名（`LongbowBridge_upper` / `FanTasselTail_0` / `MusketBarrelBand_0` / `KatanaTsubaRim` / `TeamAccent_*` 等）PascalCase + `_` 后缀表方位 / 序号 ✓，`TeamAccent_*` 沿用既有约定 ✓；新 `GameConfig` 常量沿用 `UNIT_<兵种>_<动作>` 的 UPPER_SNAKE 惯例 ✓；**新信号 0**（I-34 不涉及）。**无冲突，不触发停止条件。**
+  ⚠️ **不变量核对**：全部动画只动表现，`_next_hit_ms` / `_swing_from_ms` 与所有 `_*_ms` 截止时刻一格不动 ⇒ **I-13 成立**；新常量都进 `GameConfig`、无游离魔法数 ⇒ **I-15 成立**；装饰零碰撞体、不改任何判定 ⇒ I-30 / I-31 不涉及；`TeamAccent` + `accent_tint` 保证换边重绘完整 ⇒ **I-35 未破坏**；I-06 / I-14 等不涉及。**无违规。**
+- **复查条件**：
+  1. ⚠️ 模型在运行期烘焙模板，**必须重启游戏**再看装饰：长弓手的箭袋 / 弦结、扇子兵的穗子、火枪兵的号角与背带、武士大师的刀镡与鞘、湮灭之瞳的睑钉与虹膜环都在，且换边后队伍色件跟着变色。
+  2. 弓手拉弓时弦不脱弓、整把弓抬到肩高；火枪开火枪身后坐、枪口上跳。
+  3. 剑盾兵 / 骑士 / 狂战士劈砍时手臂跟剑走，剑不穿肩甲、刃口朝前。
+  4. 任意拖拽窗口：变高不挤出顶栏标签、超宽画面真的变大；启动即全屏。
+
