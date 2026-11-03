@@ -1,0 +1,4 @@
+SCRIPT ERROR: Invalid operands 'float' and 'String' in operator '=='.
+   at: _ready (res://check_knight.gd:20)
+   GDScript backtrace (most recent call first):
+       [0] _ready (res://check_knight.gd:20)
